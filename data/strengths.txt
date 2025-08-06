@@ -1,0 +1,15 @@
+My core strengths are in Artificial Intelligence, Deep Learning, and Data Science.
+
+KEY TECHNICAL SKILLS:
+
+- Core AI/ML Frameworks: My primary tools are TensorFlow, Keras, and PyTorch. I have built and trained various models including CNNs and Transformers. I am also familiar with the concepts behind Large Language Models (LLMs).
+
+- Explainable AI (XAI): I have hands-on experience with XAI techniques like SHAP, LIME, and PDP to interpret complex model behavior, which was a core part of my Solar Flare prediction research.
+
+- Computer Vision: I have built multiple computer vision systems using OpenCV and MediaPipe, achieving over 90% accuracy in projects like Hand Sign Language Detection and 99% in Brain Tumor Detection using VGG16.
+
+- Data Science & Analysis: I am proficient in the entire data science stack, including Python, Pandas, and NumPy for data manipulation, Matplotlib and Tableau for visualization, and Time-Series Analysis. I have also used SQL for data integration.
+
+- Backend & Deployment: I have experience deploying machine learning models as APIs using Flask and FastAPI. I am comfortable with development tools like Git, GitHub, and have foundational knowledge of AWS services like S3 and EC2.
+
+- Programming Languages: My main language is Python. I also have experience with SQL and JavaScript (used in a React web app).

@@ -1,0 +1,55 @@
+YASH CHAUDHARY
+Newark, NJ 07103 | +1 (862) 423-0054 | ygc2@njit.edu | GitHub | LinkedIn | Portfolio
+
+EDUCATION
+- Master of Science in Artificial Intelligence (September 2024 – May 2026)
+  New Jersey Institute of Technology, Newark, NJ | GPA: 3.83
+  Coursework: Deep Learning, Machine Learning, Natural Language Processing, Big Data, Artificial Intelligence, Data Mining.
+
+- Bachelor of Technology in Computer Engineering (June 2020 – June 2024)
+  Uka Tarsadia University, India | GPA: 3.3
+  Coursework: Data Structures, Database Management System, Discrete Mathematics, Blockchain Technology.
+  Certifications: AWS Cloud Foundations by AWS, Data Science Foundations by Great Learning, Complete Android 13 Developer by Udemy.
+
+SKILLS
+- AI & Deep Learning: TensorFlow, Keras, CNNs, LLMs, Computer Vision, XAI Techniques (SHAP, LIME, PDP, SAE).
+- Data Science & Analytics: Python, SQL, Pandas, NumPy, Time-Series Analysis, Matplotlib, Tableau, ETL/ELT, MATLAB.
+- Development & Tools: Jupyter Notebook, Git, GitHub, AWS (S3, EC2), React Native, JavaScript, Excel.
+
+RESEARCH & PROJECTS
+- Explainable Multivariate Time Series Transformer for Solar Flare Prediction (Under Review) | January 2025 – Present
+  - Led development of the MTST model for solar flare prediction, achieving >90% accuracy with feature engineering.
+  - Pioneered XAI techniques (SHAP, LIME, PDP) in a paper targeting to top-tier conferences.
+  - Enhanced model interpretability through feature selection and evaluation, attaining TSS, AUC, and Recall metrics exceeding 90%.
+
+- Cryptocurrency Price Movement Prediction - Tably Studio x CryptoNest.io Challenge | May 2025
+  - Developed Random Forest model to predict Bitcoin price trends, achieving ROC AUC of 0.55 using engineered features (MACD, log-volumes).
+  - Visualized trends with Tableau, delivering actionable insights for investment strategies.
+
+- Hand Sign Language Detection to Audio | October 2024 – November 2024
+  - Built a computer vision system using OpenCV and MediaPipe, achieving >90% accuracy for 10 signs.
+  - Documented pipeline for replicability, showcasing problem-solving for real-time applications.
+
+- Brain Tumor Detection Using Deep Learning | January 2023 – March 2023
+  - Built a VGG16-based brain tumor detection system with 99% test accuracy, using augmented brain scan datasets.
+  - Deployed via a Flask/FastAPI REST API.
+  - Created a user-friendly React web app for healthcare professionals to upload and analyze brain scans.
+
+WORK EXPERIENCE
+- Research Assistant, New Jersey Institute of Technology | January 2025 – Present
+  - Conducted predictive modeling with >90% accuracy, creating visualizations to support data-driven decisions.
+  - Maintained detailed documentation of methodologies, ensuring replicability for future research.
+
+- Mobile Application Developer Intern, Toshal Infotech, India | December 2023 – June 2024
+  - Delivered apps 20% ahead of schedule, using Python and SQL for data integration and quality assurance.
+  - Optimized workflows by 15%, enhancing efficiency in a fast-paced environment.
+
+- Android Developer Intern, Octacore Technologies, India | May 2023 – June 2023
+  - Reduced app response time by 41% (1.2s to 0.7s) via optimized API calls.
+  - Conducted A/B testing, increasing user engagement by 20%.
+
+COMMUNITIES & VOLUNTEER
+- Students 2 Science, Newark, NJ – Volunteer Mentor | November 2024 – Present
+  - Mentored high school students in AI and data science.
+- NJIT Community Involvement, Newark, NJ – Volunteer | September 2024 – Present
+  - Supported event logistics and community outreach.

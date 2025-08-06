@@ -1,0 +1,24 @@
+# LlamaIndex and AI Core
+llama-index
+llama-index-llms-google-genai
+llama-index-embeddings-huggingface
+
+# Web Search Tool
+tavily-python
+
+# OCR Tool
+pytesseract
+Pillow
+
+# Audio Transcription ("The Ears")
+deepgram-sdk
+sounddevice
+numpy
+
+# UI and System
+PyQt6
+pydotenv
+pywin32
+
+# Markdown Rendering
+markdown

@@ -1,0 +1,58 @@
+PROJECT: Explainable Multivariate Time Series Transformer for Solar Flare Prediction
+ROLE: Lead Developer / Researcher
+KEYWORDS: Transformer, Time Series, XAI, SHAP, LIME, PDP, Interpretability, PyTorch
+ACTIONS:
+- Led the end-to-end development of an MTST (Multivariate Time Series Transformer) model.
+- My primary contribution was pioneering the use of XAI techniques like SHAP and LIME to make the "black box" transformer model interpretable.
+- I engineered features and performed rigorous evaluation to enhance model performance.
+METRICS_AND_RESULTS:
+- Achieved over 90% accuracy on key metrics like TSS, AUC, and Recall.
+- The work is significant enough that it is currently under review for publication in a top-tier conference.
+
+PROJECT: Brain Tumor Detection Using Deep Learning
+KEYWORDS: Computer Vision, Deep Learning, VGG16, Flask, FastAPI, REST API, React, Healthcare AI
+ACTIONS:
+- I built the core of the system using a VGG16-based CNN model, fine-tuned on augmented brain scan datasets.
+- I was responsible for deploying the trained model as a REST API using Flask and FastAPI, making it accessible to a web front-end.
+- I also created the user-friendly React web application for doctors to upload and analyze the scans.
+METRICS_AND_RESULTS:
+- The model achieved a very high 99% test accuracy.
+- This project demonstrates my full-stack capabilities: from model creation to deployment and front-end integration.
+
+PROJECT: Hand Sign Language Detection to Audio
+KEYWORDS: Computer Vision, Real-Time, OpenCV, MediaPipe
+ACTIONS:
+- I built a computer vision pipeline from scratch using OpenCV and MediaPipe.
+- The system captures video, processes it in real-time to identify 10 different hand signs, and provides an output.
+- I thoroughly documented the entire pipeline to ensure the project was reproducible.
+METRICS_AND_RESULTS:
+- Achieved over 90% accuracy for recognizing the 10 signs.
+- This project highlights my ability to build and document robust, real-time AI applications.
+
+PROJECT: Cryptocurrency Price Movement Prediction
+KEYWORDS: Machine Learning, Random Forest, Feature Engineering, Tableau
+ACTIONS:
+- I developed a Random Forest model to tackle the challenge of predicting Bitcoin price trends.
+- I engineered features based on financial indicators like MACD and log-volumes to feed into the model.
+- I used Tableau to create visualizations and dashboards to present the trends and insights.
+METRICS_AND_RESULTS:
+- Achieved a ROC AUC of 0.55, which is notable in a highly volatile and random market.
+- Delivered actionable insights for potential investment strategies.
+
+WORK_EXPERIENCE: Mobile Application Developer Intern at Toshal Infotech
+KEYWORDS: Python, SQL, Data Integration, Optimization, Efficiency
+ACTIONS:
+- I used Python and SQL to build data integration and quality assurance pipelines for mobile applications.
+- I focused on optimizing existing workflows.
+METRICS_AND_RESULTS:
+- My optimizations increased workflow efficiency by 15%.
+- I consistently delivered applications 20% ahead of schedule, demonstrating strong time management.
+
+WORK_EXPERIENCE: Android Developer Intern at Octacore Technologies
+KEYWORDS: API Optimization, Performance, A/B Testing, User Engagement
+ACTIONS:
+- My main task was to improve the performance of an existing Android application by focusing on API calls.
+- I implemented A/B testing frameworks to measure the impact of my changes on user behavior.
+METRICS_AND_RESULTS:
+- I successfully reduced the application's response time by 41% (from 1.2s down to 0.7s).
+- My A/B tests showed that these performance improvements led to a 20% increase in user engagement.
