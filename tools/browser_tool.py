@@ -28,6 +28,10 @@ def browse_and_summarize_website(url: str, task_description: str) -> str:
         options.add_argument("--headless")
         options.add_argument("--no-sandbox")
         options.add_argument("--disable-dev-shm-usage")
+        # --- ADD THESE LINES TO REDUCE LOGGING NOISE ---
+        options.add_argument('--log-level=3') # Suppresses most informational logs
+        options.add_experimental_option('excludeSwitches', ['enable-logging'])
+        # -------------------------------------------------
         
         # Automatically download and manage the driver
         service = Service(ChromeDriverManager().install())

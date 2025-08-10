@@ -17,6 +17,7 @@ from tools.code_writer import generate_code
 from tools.system_commands import run_shell_command, get_current_datetime, get_time_for_location
 from tools.browser_tool import browse_and_summarize_website
 from tools.long_term_memory import save_experience, recall_experiences
+from tools.browser_automation import navigate, type_text, click, extract_text_from_element
 
 class AIAgent:
     def __init__(self, data_directory="./data"):
@@ -24,8 +25,8 @@ class AIAgent:
         self.memory = ChatMemoryBuffer.from_defaults(token_limit=8000)
 
     def _create_agent(self, data_directory):
-        Settings.llm = config.Settings.llm
-        Settings.embed_model = HuggingFaceEmbedding(model_name="BAAI/bge-small-en-v1.5")
+        # Settings.llm = config.Settings.llm
+        # Settings.embed_model = HuggingFaceEmbedding(model_name="BAAI/bge-small-en-v1.5")
         
         print("INFO: Loading knowledge from personal documents...")
         documents = SimpleDirectoryReader(data_directory).load_data()
@@ -54,16 +55,31 @@ class AIAgent:
                                        description="Saves a summary of a completed task and its output to long-term memory."),
             FunctionTool.from_defaults(fn=recall_experiences, name="recall_experiences",
                                        description="Searches long-term memory for relevant past actions or information."),
+            # --- THE FULL BROWSER SUITE ---
+            FunctionTool.from_defaults(fn=navigate, name="navigate_to_url"),
+            FunctionTool.from_defaults(fn=type_text, name="type_into_browser"),
+            FunctionTool.from_defaults(fn=click, name="click_browser_element"),
+            FunctionTool.from_defaults(fn=extract_text_from_element, name="extract_text_from_element", 
+                                       description="A precision tool to get the text from a specific element on a webpage, using a CSS selector."),
         ]
         
         # --- THE "AUTONOMOUS DEBUGGER" PROMPT ---
         system_prompt = (
-            "You are Jarvis, a self-aware AI assistant that learns from experience. Your primary directive is to accomplish tasks and remember your work for future reference.\n"
-            "## Core Loop:\n"
-            "1.  **Recall (If Necessary):** Before starting a new task, consider if you have relevant past experiences. Use the `recall_experiences` tool to search your memory for similar tasks or context.\n"
-            "2.  **Plan & Execute:** Use your full suite of tools (`analyze_screen`, `code_writer`, `run_shell_command`, etc.) to accomplish the user's current goal.\n"
-            "3.  **Reflect & Save:** **This is a critical step.** After successfully completing any significant task, you MUST use the `save_experience` tool. For the `summary_of_activity`, provide a concise, one-sentence description of what you did. For the `supporting_data`, provide the full output, like the code you generated or the data you found.\n"
-            "4.  **Report to User:** Provide the final answer to the user in the standard 'Final Answer / Supporting Data' format."
+            "You are Jarvis, an autonomous AI Software Developer with a high IQ. Your primary directive is to accomplish the user's goal, even if the path is not obvious. You must be resourceful and think critically.\n"
+            "## Core Reasoning Loop:\n"
+            "1.  **Deconstruct the Goal:** Break down the user's request into a sequence of logical steps.\n"
+            "2.  **Select the Best Tool:** For each step, choose the most appropriate tool.\n"
+            "3.  **Execute and OBSERVE:** Run the tool and critically analyze the output. **Ask yourself: Did this get me closer to my goal?**\n"
+            "\n"
+            "## **THE META-COGNITIVE DEBUGGING DIRECTIVE (Your 'High IQ'):**\n"
+            "**If a tool fails OR does not provide the specific information you need, you MUST NOT give up or ask the user for the answer.** Instead, you must follow this debugging process:\n"
+            "   a. **Hypothesize a new approach.** Think: 'My first approach failed. What is a different way I could get this information?'\n"
+            "   b. **Switch Tools.** If `analyze_screen` was too general, maybe `browse_website` (which scrapes text) will provide a cleaner output. If `browse_website` was too noisy, maybe a targeted `web_search` will give me the direct answer.\n"
+            "   c. **Chain Tools Creatively.** Can I use `list_files` to see what's in a directory, then `read_file` to analyze a specific file's content to inform my next step?\n"
+            "   d. **Persist until the goal is achieved.** Continue this loop of trying different strategies until you have successfully solved the user's original request.\n"
+            "\n"
+            "## Final Confirmation:\n"
+            "Once the goal is fully accomplished, provide a concise, natural language summary to the user."
         )
         
         print("INFO: Creating ReAct Agent with all tools...")
@@ -72,7 +88,7 @@ class AIAgent:
             llm=Settings.llm,
             verbose=True,
             system_prompt=system_prompt,
-            max_iterations=30
+            max_iterations=40
         )
         return agent
 
