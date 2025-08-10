@@ -15,6 +15,7 @@ PICOVOICE_KEYWORD_PATH = "jarvis_windows.ppn"
 class ChatWindow(QWidget):
     response_received = pyqtSignal(str)
     wake_word_detected_signal = pyqtSignal()
+    terminal_output_received = pyqtSignal(str)
 
     def __init__(self, agent_instance):
         super().__init__()
@@ -33,6 +34,24 @@ class ChatWindow(QWidget):
         self.response_received.connect(self.on_agent_response)
         self.wake_word_detected_signal.connect(self.on_wake_word_detected)
         self.start_wake_word_detector() # Start on launch
+        
+        # In ui.py, inside the __init__ method
+        self.terminal_display = QTextBrowser(self)
+        self.terminal_display.setPlaceholderText("Jarvis's Terminal Output...")
+        self.terminal_display.setStyleSheet("""
+            QTextBrowser { 
+                background-color: #010409; 
+                color: #A6ACCD; 
+                border: 1px solid #30363D; 
+                border-radius: 6px; 
+                font-family: 'Fira Code', 'Courier New', monospace;
+                font-size: 12px;
+                padding: 10px;
+            }
+        """)
+        self.terminal_display.setFixedHeight(150) # Give it a fixed height
+        self.layout.addWidget(self.terminal_display) # Add it below the main chat
+        self.terminal_output_received.connect(self.update_terminal_display)
 
     def closeEvent(self, event):
         self.stop_wake_word_detector()
@@ -58,6 +77,10 @@ class ChatWindow(QWidget):
         self.layout.addLayout(input_layout)
         self.add_message_to_display("system", "Jarvis is ready. Awaiting wake word...")
 
+    def update_terminal_display(self, text):
+        self.terminal_display.append(text)
+        self.terminal_display.verticalScrollBar().setValue(self.terminal_display.verticalScrollBar().maximum())
+    
     # --- ROBUST WAKE WORD MANAGEMENT ---
     def start_wake_word_detector(self):
         if not self.is_wake_word_detector_running:

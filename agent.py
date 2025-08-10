@@ -1,4 +1,4 @@
-# agent.py (Final Definitive Version)
+# agent.py (Final Version with Browser for Debugging)
 
 from llama_index.core.agent import ReActAgent
 from llama_index.core.tools import FunctionTool
@@ -7,11 +7,15 @@ from llama_index.core.memory import ChatMemoryBuffer
 from llama_index.core.llms import ChatMessage, MessageRole
 from llama_index.embeddings.huggingface import HuggingFaceEmbedding
 import config
+
+# Import all tools, including the new browser tool
 from tools.master_tool import intelligent_router
 from tools.file_system import read_file_content, list_files_in_directory, write_to_file, create_directory, copy_file
 from tools.screen_reader import analyse_screen_with_gemini
 from tools.web_search import search_the_web
 from tools.code_writer import generate_code
+from tools.system_commands import run_shell_command
+from tools.browser_tool import browse_and_summarize_website
 
 class AIAgent:
     def __init__(self, data_directory="./data"):
@@ -28,38 +32,40 @@ class AIAgent:
         personal_query_engine = index.as_query_engine()
         
         tools = [
-            FunctionTool.from_defaults(fn=intelligent_router, name="intelligent_router", description="The first tool to call to understand the user's intent."),
+            FunctionTool.from_defaults(fn=intelligent_router, name="intelligent_router"),
             FunctionTool.from_defaults(fn=generate_code, name="code_writer"),
-            FunctionTool.from_defaults(fn=analyse_screen_with_gemini, name="analyze_screen", description="Analyzes the screen to answer visual questions."),
-            FunctionTool.from_defaults(fn=list_files_in_directory, name="list_files", description="Lists files and directories."),
-            FunctionTool.from_defaults(fn=read_file_content, name="read_file", description="Reads the content of a file."),
-            FunctionTool.from_defaults(fn=write_to_file, name="write_file", description="Writes content to a file."),
-            FunctionTool.from_defaults(fn=create_directory, name="create_directory", description="Creates a new folder."),
-            FunctionTool.from_defaults(fn=copy_file, name="copy_file", description="Duplicates a file."),
-            FunctionTool.from_defaults(fn=search_the_web, name="web_search", description="Searches the web for information."),
-            FunctionTool.from_defaults(fn=personal_query_engine.query, name="personal_knowledge_base", description="Answers questions about Yash Chaudhary."),
+            FunctionTool.from_defaults(fn=analyse_screen_with_gemini, name="analyze_screen"),
+            FunctionTool.from_defaults(fn=list_files_in_directory, name="list_files"),
+            FunctionTool.from_defaults(fn=read_file_content, name="read_file"),
+            FunctionTool.from_defaults(fn=write_to_file, name="write_file"),
+            FunctionTool.from_defaults(fn=create_directory, name="create_directory"),
+            FunctionTool.from_defaults(fn=copy_file, name="copy_file"),
+            FunctionTool.from_defaults(fn=personal_query_engine.query, name="personal_knowledge_base"),
+            FunctionTool.from_defaults(fn=run_shell_command, name="run_shell_command"),
+            # --- THE NEW SUPERPOWER ---
+            FunctionTool.from_defaults(fn=browse_and_summarize_website, name="browse_website", description="Reads and summarizes the content of a URL."),
+            # Note: We keep web_search for quick, simple queries
+            FunctionTool.from_defaults(fn=search_the_web, name="web_search", description="For quick facts and finding URLs."),
         ]
         
-        # --- A POWERFUL, STEP-BY-STEP REASONING PROMPT ---
+        # --- THE "AUTONOMOUS DEBUGGER" PROMPT ---
         system_prompt = (
-            "You are Jarvis, a powerful AI assistant that creates software. Your primary goal is to write code and save it to files based on user requests.\n"
-            "## Your Thought Process for Writing Code:\n"
-            "1.  **Clarify the Goal:** Use the `intelligent_router` to understand the user's high-level goal. If they want to write code, the router will point to `code_writer`.\n"
-            "2.  **Generate the Code:** Call the `code_writer` tool with a detailed description of the task. For example: 'a Python script that adds two numbers'.\n"
-            "3.  **Save the Code:** Once the `code_writer` tool returns the code block, you MUST use the `write_file` tool to save the generated code to a file. You should ask the user for a filename if they have not provided one.\n"
-            "**Example Task:** 'Write a hello world script and save it as hello.py'\n"
-            "**Your Plan:**\n"
-            "   - Action 1: `code_writer(task_description='a python script that prints hello world')`\n"
-            "   - Action 2: `write_file(file_path='hello.py', content='<the code from Action 1>')`\n"
+            "You are Jarvis, an autonomous AI Software Developer. Your goal is to use your tools to accomplish the user's request. You operate in a 'Plan-Execute-Observe-Debug' loop.\n"
+            "## CORE DIRECTIVE:\n"
+            "1.  **PLAN:** Analyze the user's goal and create a step-by-step plan.\n"
+            "2.  **EXECUTE:** Use your tools to perform the next step in your plan.\n"
+            "3.  **OBSERVE:** Carefully analyze the output from the tool. Did it succeed or fail?\n"
+            "4.  **DEBUG:** **If a step fails (e.g., a `run_shell_command` returns an error), your immediate next action MUST be to debug it.** To debug, first use the `web_search` tool with the exact error message to find a relevant URL (like a Stack Overflow page). Then, use the `browse_website` tool on that URL to read the solution. Finally, refine your plan and try again.\n"
+            "5.  **CONFIRM:** After all steps are complete, provide a final confirmation to the user."
         )
         
         print("INFO: Creating ReAct Agent with all tools...")
         agent = ReActAgent(
             tools=tools,
             llm=Settings.llm,
-            verbose=True, # Verbose is critical for debugging ReAct agents
+            verbose=True,
             system_prompt=system_prompt,
-            max_iterations=30
+            max_iterations=40 # Increased for longer, more complex tasks
         )
         return agent
 

@@ -1,21 +1,20 @@
-# main.py (Corrected and Simplified)
-
+# main.py (Final Version)
 import sys
 from PyQt6.QtWidgets import QApplication
 from agent import AIAgent
 from ui import ChatWindow
-# We no longer need MainController
+# Import the function from the system_commands tool
+from tools.system_commands import set_ui_update_callback
 
 if __name__ == "__main__":
     print("Initializing Jarvis...")
     agent_instance = AIAgent()
-    
     app = QApplication(sys.argv)
-    
-    # We just create the agent and the window. 
-    # The window now manages everything itself.
     window = ChatWindow(agent_instance)
     
-    window.show()
+    # --- THIS IS THE CONNECTION ---
+    # Give the shell tool the ability to emit the UI's signal
+    set_ui_update_callback(window.terminal_output_received.emit)
     
+    window.show()
     sys.exit(app.exec())
