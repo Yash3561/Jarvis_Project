@@ -1,7 +1,6 @@
 # tools/file_system.py (Corrected and Expanded)
 
 import os
-import shutil
 
 def list_files_in_directory(directory_path: str = ".") -> str:
     """
@@ -59,19 +58,3 @@ def create_directory(directory_path: str) -> str:
         return f"Successfully created directory (or it already existed): {directory_path}"
     except Exception as e:
         return f"An error occurred while creating the directory: {e}"
-    
-def copy_file(source_path: str, destination_path: str) -> str:
-    """
-    Copies a file from a source path to a destination path.
-    """
-    try:
-        # If destination is a directory, create the full path for the new file
-        if os.path.isdir(destination_path):
-            destination_path = os.path.join(destination_path, os.path.basename(source_path))
-            
-        shutil.copy(source_path, destination_path)
-        return f"Successfully copied {source_path} to {destination_path}"
-    except FileNotFoundError:
-        return f"Error: The source file '{source_path}' was not found."
-    except Exception as e:
-        return f"An error occurred while copying the file: {e}"

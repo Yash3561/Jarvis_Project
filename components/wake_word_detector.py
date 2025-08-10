@@ -1,39 +1,60 @@
-# wake_word_detector.py
-import os, struct, pyaudio
+# components/wake_word_detector.py (Qt Signal Version)
+
+import struct
 import pvporcupine
-from dotenv import load_dotenv
+import pyaudio
+from PyQt6.QtCore import QObject, pyqtSignal, QThread
 
-load_dotenv()
-PICOVOICE_ACCESS_KEY = os.getenv("PICOVOICE_ACCESS_KEY")
+class WakeWordDetector(QObject):
+    # This signal will be emitted when the wake word is detected
+    wakeWordDetected = pyqtSignal()
 
-class WakeWordDetector:
-    def __init__(self, on_wake_word_detected):
-        self.on_wake_word_detected = on_wake_word_detected
-        self.porcupine = None; self.audio_stream = None; self.pyaudio_instance = None
-        self._is_running = False
+    def __init__(self, access_key, keyword_path):
+        super().__init__()
+        self.access_key = access_key
+        self.keyword_path = keyword_path
+        self.is_running = False
+        self.porcupine = None
+        self.audio_stream = None
+        self.pa = None
 
-    def start(self):
-        if not PICOVOICE_ACCESS_KEY: print("ERROR: PICOVOICE_ACCESS_KEY not found."); return
+    def run(self):
+        """This method will run in the background thread."""
+        self.is_running = True
+        print("INFO: Wake word detector started. Listening for 'Jarvis'...")
         try:
-            self.porcupine = pvporcupine.create(access_key=PICOVOICE_ACCESS_KEY, keywords=['jarvis'], sensitivities=[0.6])
-            self.pyaudio_instance = pyaudio.PyAudio()
-            self.audio_stream = self.pyaudio_instance.open(
-                rate=self.porcupine.sample_rate, channels=1, format=pyaudio.paInt16,
-                input=True, frames_per_buffer=self.porcupine.frame_length)
-            self._is_running = True
-            print("INFO: Wake word detector started. Listening for 'Jarvis'...")
-            while self._is_running:
+            self.porcupine = pvporcupine.create(
+                access_key=self.access_key,
+                keyword_paths=[self.keyword_path]
+            )
+            self.pa = pyaudio.PyAudio()
+            self.audio_stream = self.pa.open(
+                rate=self.porcupine.sample_rate,
+                channels=1,
+                format=pyaudio.paInt16,
+                input=True,
+                frames_per_buffer=self.porcupine.frame_length
+            )
+
+            while self.is_running:
                 pcm = self.audio_stream.read(self.porcupine.frame_length, exception_on_overflow=False)
                 pcm = struct.unpack_from("h" * self.porcupine.frame_length, pcm)
+                
                 if self.porcupine.process(pcm) >= 0:
                     print("INFO: Wake word 'Jarvis' detected!")
-                    self.on_wake_word_detected()
-        except Exception as e: print(f"ERROR in WakeWordDetector: {e}")
-        finally: self.stop()
+                    self.wakeWordDetected.emit() # Emit the signal instead of calling a function
+                    self.is_running = False # Stop after detection
+
+        except Exception as e:
+            print(f"ERROR in WakeWordDetector run: {e}")
+        finally:
+            if self.porcupine:
+                self.porcupine.delete()
+            if self.audio_stream:
+                self.audio_stream.close()
+            if self.pa:
+                self.pa.terminate()
+            print("INFO: Wake word detector thread finished.")
 
     def stop(self):
-        if self._is_running: self._is_running = False
-        if self.audio_stream: self.audio_stream.stop_stream(); self.audio_stream.close(); self.audio_stream = None
-        if self.pyaudio_instance: self.pyaudio_instance.terminate(); self.pyaudio_instance = None
-        if self.porcupine: self.porcupine.delete(); self.porcupine = None
-        print("INFO: Wake word detector stopped.")
+        self.is_running = False
