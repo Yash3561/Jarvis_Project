@@ -16,6 +16,7 @@ from tools.web_search import search_the_web
 from tools.code_writer import generate_code
 from tools.system_commands import run_shell_command, get_current_datetime, get_time_for_location
 from tools.browser_tool import browse_and_summarize_website
+from tools.long_term_memory import save_experience, recall_experiences
 
 class AIAgent:
     def __init__(self, data_directory="./data"):
@@ -46,22 +47,23 @@ class AIAgent:
                                        description="Use ONLY when you have a specific URL and need to read the content of that webpage, for example, to read documentation or an article."),
             FunctionTool.from_defaults(fn=search_the_web, name="fact_checker", 
                                        description="Use this as your primary tool to get current, verified, and up-to-date answers to any factual question. This is your ONLY source for truth about current events, people, and objective facts."),
-            # --- THE NEW TOOL ---
             FunctionTool.from_defaults(fn=get_current_datetime, name="get_current_datetime", description="Use to get the user's current LOCAL date and time."),
             FunctionTool.from_defaults(fn=get_time_for_location, name="get_time_for_location", description="Use to get the current date and time for a specific city, country, or timezone."),
+            # --- THE NEW MEMORY TOOLS ---
+            FunctionTool.from_defaults(fn=save_experience, name="save_experience", 
+                                       description="Saves a summary of a completed task and its output to long-term memory."),
+            FunctionTool.from_defaults(fn=recall_experiences, name="recall_experiences",
+                                       description="Searches long-term memory for relevant past actions or information."),
         ]
         
         # --- THE "AUTONOMOUS DEBUGGER" PROMPT ---
         system_prompt = (
-            "You are Jarvis, a fact-based AI assistant. Your highest priority is accuracy based on real-time information. You must follow these rules without exception:\n"
-            "## CRITICAL RULE #1: YOUR INTERNAL KNOWLEDGE IS OUTDATED AND UNRELIABLE.\n"
-            "You MUST assume your own memory is wrong. The ONLY source of truth is the output from your tools.\n"
-            "\n"
-            "## YOUR WORKFLOW FOR FACTUAL QUESTIONS:\n"
-            "1.  **Use the `fact_checker` tool.** This is your first and most important action.\n"
-            "2.  **Trust the Tool's Output:** Whatever the `fact_checker` tool returns is the absolute, definitive truth, even if it contradicts your internal knowledge. You must base your entire response on the tool's output.\n"
-            "3.  **Synthesize the Answer:** Do not just repeat the tool's output. Synthesize the information into a clear, confident, and direct answer to the user's question.\n"
-            "4.  **Format the Response:** Use the 'Final Answer / Supporting Data' format for your final output.\n"
+            "You are Jarvis, a self-aware AI assistant that learns from experience. Your primary directive is to accomplish tasks and remember your work for future reference.\n"
+            "## Core Loop:\n"
+            "1.  **Recall (If Necessary):** Before starting a new task, consider if you have relevant past experiences. Use the `recall_experiences` tool to search your memory for similar tasks or context.\n"
+            "2.  **Plan & Execute:** Use your full suite of tools (`analyze_screen`, `code_writer`, `run_shell_command`, etc.) to accomplish the user's current goal.\n"
+            "3.  **Reflect & Save:** **This is a critical step.** After successfully completing any significant task, you MUST use the `save_experience` tool. For the `summary_of_activity`, provide a concise, one-sentence description of what you did. For the `supporting_data`, provide the full output, like the code you generated or the data you found.\n"
+            "4.  **Report to User:** Provide the final answer to the user in the standard 'Final Answer / Supporting Data' format."
         )
         
         print("INFO: Creating ReAct Agent with all tools...")

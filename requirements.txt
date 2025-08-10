@@ -2,6 +2,7 @@
 llama-index
 llama-index-llms-google-genai
 llama-index-embeddings-huggingface
+llama-index-vector-stores-chroma
 
 # Web Search Tool
 tavily-python
@@ -29,3 +30,5 @@ webdriver-manager
 
 pyttsx3
 pytz
+
+
