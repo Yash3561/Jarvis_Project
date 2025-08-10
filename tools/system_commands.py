@@ -84,3 +84,7 @@ def run_shell_command(command: str) -> str:
         error_message = f"ERROR: Failed to execute command '{command}'. Exception: {e}"
         UI_UPDATE_CALLBACK(error_message)
         return error_message
+
+def get_timestamp() -> str:
+    """Returns a clean, file-safe timestamp string. E.g., '20250810_143205'"""
+    return datetime.now().strftime("%Y%m%d_%H%M%S")
