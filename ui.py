@@ -137,25 +137,35 @@ class ChatWindow(QWidget):
         loop = asyncio.new_event_loop(); asyncio.set_event_loop(loop)
         suggestion = loop.run_until_complete(self.agent.ask(question)); self.response_received.emit(suggestion)
 
+    # --- THE ONLY MODIFIED FUNCTION ---
     def on_agent_response(self, response):
-        # 1. Display the full, detailed response in the chat window for the user to read.
+        # 1. Display the agent's full text response.
         self.add_message_to_display("assistant", response)
-        
-        # 2. Parse the response to find the conversational part for speaking.
-        spoken_response = response # Default to speaking the whole thing if parsing fails
-        
-        # Use regex to find the "Final Answer:" block.
-        # re.DOTALL makes '.' match newlines as well.
+
+        # 2. Parse for the spoken part.
+        spoken_response = response
         match = re.search(r"Final Answer:(.*?)(Supporting Data:|$)", response, re.DOTALL)
-        
         if match:
-            # If we found a match, the spoken response is the clean, stripped text.
             spoken_response = match.group(1).strip()
         
-        # 3. Speak only the concise, conversational summary.
+        # 3. Speak the concise summary.
         speaker.speak_in_thread(spoken_response)
         
-        # 4. Reset the state for the next command.
+        # 4. --- THE DEFINITIVE DYNAMIC IMAGE FIX ---
+        # Search the agent's full response for any mention of a .png filename.
+        image_matches = re.findall(r'(\w+\.png)', response)
+        if image_matches:
+            # Get the last mentioned png file, as it's likely the final output
+            image_path = image_matches[-1]
+            if os.path.exists(image_path):
+                print(f"INFO: Found generated image '{image_path}'. Displaying in UI.")
+                abs_path = os.path.abspath(image_path).replace('\\', '/')
+                image_html = f'<p><b>Generated Image:</b></p><img src="file:///{abs_path}" alt="{image_path}" style="max-width:100%; height:auto;">'
+                self.chat_display.append(image_html)
+            else:
+                print(f"WARNING: Agent mentioned image '{image_path}', but it was not found on disk.")
+        
+        # 5. Reset for the next command.
         self.add_message_to_display("system", "Jarvis is ready. Awaiting wake word...")
         self.start_wake_word_detector()
 

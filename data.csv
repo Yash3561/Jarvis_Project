@@ -1,0 +1,9 @@
+OrderID,Product,Category,Price,Date
+1,Laptop,Electronics,1200,2025-08-01
+2,Keyboard,Electronics,75,2025-08-01
+3,T-Shirt,Apparel,25,2025-08-02
+4,Mouse,Electronics,25,2025-08-02
+5,Jeans,Apparel,90,2025-08-03
+6,Monitor,Electronics,300,2025-08-04
+7,Jacket,Apparel,150,2025-08-04
+8,Webcam,Electronics,60,2025-08-05
