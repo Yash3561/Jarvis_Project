@@ -22,3 +22,10 @@ pywin32
 
 # Markdown Rendering
 markdown
+
+selenium
+beautifulsoup4
+webdriver-manager
+
+pyttsx3
+pytz

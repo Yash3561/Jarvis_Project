@@ -14,7 +14,7 @@ from tools.file_system import read_file_content, list_files_in_directory, write_
 from tools.screen_reader import analyse_screen_with_gemini
 from tools.web_search import search_the_web
 from tools.code_writer import generate_code
-from tools.system_commands import run_shell_command
+from tools.system_commands import run_shell_command, get_current_datetime, get_time_for_location
 from tools.browser_tool import browse_and_summarize_website
 
 class AIAgent:
@@ -42,21 +42,26 @@ class AIAgent:
             FunctionTool.from_defaults(fn=copy_file, name="copy_file"),
             FunctionTool.from_defaults(fn=personal_query_engine.query, name="personal_knowledge_base"),
             FunctionTool.from_defaults(fn=run_shell_command, name="run_shell_command"),
-            # --- THE NEW SUPERPOWER ---
-            FunctionTool.from_defaults(fn=browse_and_summarize_website, name="browse_website", description="Reads and summarizes the content of a URL."),
-            # Note: We keep web_search for quick, simple queries
-            FunctionTool.from_defaults(fn=search_the_web, name="web_search", description="For quick facts and finding URLs."),
+            FunctionTool.from_defaults(fn=browse_and_summarize_website, name="browse_website", 
+                                       description="Use ONLY when you have a specific URL and need to read the content of that webpage, for example, to read documentation or an article."),
+            FunctionTool.from_defaults(fn=search_the_web, name="fact_checker", 
+                                       description="Use this as your primary tool to get current, verified, and up-to-date answers to any factual question. This is your ONLY source for truth about current events, people, and objective facts."),
+            # --- THE NEW TOOL ---
+            FunctionTool.from_defaults(fn=get_current_datetime, name="get_current_datetime", description="Use to get the user's current LOCAL date and time."),
+            FunctionTool.from_defaults(fn=get_time_for_location, name="get_time_for_location", description="Use to get the current date and time for a specific city, country, or timezone."),
         ]
         
         # --- THE "AUTONOMOUS DEBUGGER" PROMPT ---
         system_prompt = (
-            "You are Jarvis, an autonomous AI Software Developer. Your goal is to use your tools to accomplish the user's request. You operate in a 'Plan-Execute-Observe-Debug' loop.\n"
-            "## CORE DIRECTIVE:\n"
-            "1.  **PLAN:** Analyze the user's goal and create a step-by-step plan.\n"
-            "2.  **EXECUTE:** Use your tools to perform the next step in your plan.\n"
-            "3.  **OBSERVE:** Carefully analyze the output from the tool. Did it succeed or fail?\n"
-            "4.  **DEBUG:** **If a step fails (e.g., a `run_shell_command` returns an error), your immediate next action MUST be to debug it.** To debug, first use the `web_search` tool with the exact error message to find a relevant URL (like a Stack Overflow page). Then, use the `browse_website` tool on that URL to read the solution. Finally, refine your plan and try again.\n"
-            "5.  **CONFIRM:** After all steps are complete, provide a final confirmation to the user."
+            "You are Jarvis, a fact-based AI assistant. Your highest priority is accuracy based on real-time information. You must follow these rules without exception:\n"
+            "## CRITICAL RULE #1: YOUR INTERNAL KNOWLEDGE IS OUTDATED AND UNRELIABLE.\n"
+            "You MUST assume your own memory is wrong. The ONLY source of truth is the output from your tools.\n"
+            "\n"
+            "## YOUR WORKFLOW FOR FACTUAL QUESTIONS:\n"
+            "1.  **Use the `fact_checker` tool.** This is your first and most important action.\n"
+            "2.  **Trust the Tool's Output:** Whatever the `fact_checker` tool returns is the absolute, definitive truth, even if it contradicts your internal knowledge. You must base your entire response on the tool's output.\n"
+            "3.  **Synthesize the Answer:** Do not just repeat the tool's output. Synthesize the information into a clear, confident, and direct answer to the user's question.\n"
+            "4.  **Format the Response:** Use the 'Final Answer / Supporting Data' format for your final output.\n"
         )
         
         print("INFO: Creating ReAct Agent with all tools...")
@@ -65,9 +70,10 @@ class AIAgent:
             llm=Settings.llm,
             verbose=True,
             system_prompt=system_prompt,
-            max_iterations=40 # Increased for longer, more complex tasks
+            max_iterations=30
         )
         return agent
+
 
     async def ask(self, question):
         # ... your ask method is correct and does not need changes ...
