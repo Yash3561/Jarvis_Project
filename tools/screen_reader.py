@@ -72,3 +72,32 @@ def save_screenshot_to_file(file_path: str) -> str:
         return f"Successfully saved screenshot of the primary monitor to {screenshot_path}"
     except Exception as e:
         return f"An error occurred while saving the screenshot: {e}"
+    
+def analyze_image_file(file_path: str, user_prompt: str) -> str:
+    """
+    Analyzes a single image file from a given path and answers a question about it.
+    Use this to look at and understand specific images on the local disk.
+    For example: analyze_image_file(file_path='path/to/image.png', user_prompt='What is in this image?')
+    """
+    print(f"INFO: Analyzing local image file: '{file_path}' with prompt: '{user_prompt}'")
+
+    if not os.path.exists(file_path):
+        return f"Error: The file '{file_path}' does not exist."
+
+    try:
+        # Configure the Gemini API client
+        genai.configure(api_key=config.Settings.gemini_api_key)
+        model = genai.GenerativeModel('gemini-1.5-pro-latest')
+
+        # Open the image and prepare it for the API
+        img = Image.open(file_path)
+        
+        # Prepare the prompt for Gemini
+        response = model.generate_content([user_prompt, img])
+        
+        print("INFO: Gemini image file analysis complete.")
+        return response.text
+
+    except Exception as e:
+        print(f"ERROR: Failed to analyze image file '{file_path}'. Exception: {e}")
+        return f"Error during image analysis: {e}"
