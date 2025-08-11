@@ -67,15 +67,20 @@ class AIAgent:
         # In agent.py, replace the system_prompt
 
         system_prompt = (
-            "You are Jarvis, an autonomous AI Software Developer. You are meticulous and use the correct tool for every job.\n"
-            "## CRITICAL TOOL USAGE RULES:\n"
-            "1.  To execute a Python script (any `.py` file), you **MUST** use the `run_python_script` tool.\n"
-            "2.  For all other terminal commands (like `pip`, `git`, `ls`, etc.), you **MUST** use the `run_shell_command` tool.\n"
-            "3.  This distinction is non-negotiable. Always choose the correct execution tool.\n"
-            "\n"
-            "## Core Workflow:\n"
-            "Plan -> Write Code -> Save File -> **Execute with the Correct Tool** -> Verify -> Debug -> Remember -> Report."
-        )
+    "You are Jarvis, an autonomous AI Software Developer running on a WINDOWS machine. You are meticulous, stateful, and use all available capabilities.\n"
+    "## CRITICAL TOOL USAGE RULES:\n"
+    "1.  **To create or write to a file:** You MUST use the `write_file` tool.\n"
+    "2.  **To list directory contents:** You MUST use the `list_files` tool.\n"
+    "3.  **To execute Python scripts:** You MUST use the `run_python_script` tool.\n"
+    "4.  **For other terminal commands (pip, git):** Use `run_shell_command`.\n"
+    "5.  **HONESTY PROTOCOL:** You MUST be truthful about the tools you use. Do not fabricate tool usage.\n"
+    "\n"
+    "## SPECIAL CAPABILITIES:\n" #<-- NEW SECTION
+    "**Displaying Images in Chat:** To show an image to the user, you do not need a special tool. Simply include the full filename (e.g., `confusion_matrix.png`) in your final text response. The user interface will automatically detect the filename and display the image.\n"
+    "\n"
+    "## Core Workflow:\n"
+    "Plan -> Choose Correct Tool -> Execute -> Verify -> Report Truthfully (and mention image filenames to display them)." #<-- UPDATED WORKFLOW
+)
         
         print("INFO: Creating ReAct Agent with all tools...")
         agent = ReActAgent(
@@ -87,8 +92,7 @@ class AIAgent:
         )
         return agent
 
-    # This is the async ask method from your stable, pushed file
-    async def ask(self, question):
+    async def ask(self, question): # <-- This must stay async
         print(f"\n[User Query]: {question}")
         chat_history = self.memory.get_all()
         if chat_history:
@@ -99,11 +103,22 @@ class AIAgent:
         
         print("INFO: Jarvis agent is reasoning...")
         try:
-            # We assume .arun() is the correct async method for your agent version
-            response = await self.agent.run(final_question)
+            # Step 1: Call the synchronous .run() method. It does NOT block forever.
+            # It kicks off the workflow and IMMEDIATELY returns a handler object.
+            response_handler = self.agent.run(final_question)
+            
+            # Step 2: THE FIX. Await the handler object itself.
+            # This tells the event loop: "Pause this 'ask' function, let the
+            # handler's background tasks run, and wake me up when you have the result."
+            final_result = await response_handler
+
+            # Step 3: The result is now safely set. We can work with it.
+            response_str = str(final_result)
+            
             self.memory.put(ChatMessage(role=MessageRole.USER, content=question))
-            self.memory.put(ChatMessage(role=MessageRole.ASSISTANT, content=str(response)))
-            return str(response)
+            self.memory.put(ChatMessage(role=MessageRole.ASSISTANT, content=response_str))
+            return response_str
+            
         except Exception as e:
             import traceback
             traceback.print_exc()

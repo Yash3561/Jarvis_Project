@@ -39,6 +39,7 @@ class Bridge(QObject):
 
 class ChatWindow(QMainWindow):
     response_received = pyqtSignal(str)
+    terminal_output_received = pyqtSignal(str)
     wake_word_detected_signal = pyqtSignal()
 
     def __init__(self, agent_instance):
@@ -58,6 +59,7 @@ class ChatWindow(QMainWindow):
         self.init_ui()
         
         self.response_received.connect(self.on_agent_response)
+        self.terminal_output_received.connect(self.on_terminal_output)
         self.wake_word_detected_signal.connect(self.on_wake_word_detected)
         
         self.start_wake_word_detector()
@@ -90,6 +92,22 @@ class ChatWindow(QMainWindow):
         self.web_view.page().runJavaScript(script)
 
     @pyqtSlot(str)
+    
+    def on_terminal_output(self, text):
+        """
+        This slot receives text from any thread and safely updates the UI terminal
+        because it is guaranteed to run on the Main GUI Thread.
+        """
+        # It calls the JS function to add a line to the terminal display
+        self.run_js(f"add_terminal_output('{self.bridge.escape_for_js(text)}')")
+        
+    def update_terminal_display(self, text):
+        """
+        This is the public method that other threads (like the shell tool) will call.
+        Instead of updating the UI directly, it emits a signal. This is thread-safe.
+        """
+        self.terminal_output_received.emit(text)
+    
     def on_agent_response(self, response):
         self.is_thinking = False
         self.run_js("update_mic_button('idle')")
@@ -142,9 +160,6 @@ class ChatWindow(QMainWindow):
                 if md_html.startswith("<p>") and md_html.endswith("</p>"): md_html = md_html[3:-4]
                 content_html += md_html
         return content_html
-
-    def update_terminal_display(self, text):
-        self.run_js(f"add_terminal_output('{self.bridge.escape_for_js(text)}')")
 
     def process_user_query(self, query: str):
         if self.is_thinking: return
