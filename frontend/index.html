@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Jarvis Co-Pilot</title>
+    <script src="qrc:///qtwebchannel/qwebchannel.js"></script>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div id="chat-container"></div>
+    <div id="bottom-container">
+        <div id="terminal-container" class="hidden">
+            <div id="terminal-header">▲ Terminal</div>
+            <div id="terminal-output"></div>
+        </div>
+        <div id="input-area">
+            <textarea id="input-box" placeholder="Ask Jarvis..." rows="1"></textarea>
+            <button id="send-btn" title="Send Message">➤</button>
+            <button id="mic-btn" title="Toggle Voice Input">🎤</button>
+        </div>
+    </div>
+    <script src="main.js"></script>
+</body>
+</html>

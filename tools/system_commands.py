@@ -1,90 +1,70 @@
-# tools/system_commands.py (Upgraded with Location-Aware Time)
+# tools/system_commands.py (The Definitive Web-UI Version)
 
 import subprocess
 import os
 from datetime import datetime
-import pytz  # <--- Import the new library
+import pytz
 
-# This global callback system is correct and does not need changes
-UI_UPDATE_CALLBACK = None
-def set_ui_update_callback(callback):
-    global UI_UPDATE_CALLBACK
-    UI_UPDATE_CALLBACK = callback
+# This global variable will hold a direct reference to the UI window instance.
+UI_WINDOW_INSTANCE = None
 
+def set_ui_window_instance(window_instance):
+    """Stores the main UI window instance so tools can talk to it."""
+    global UI_WINDOW_INSTANCE
+    UI_WINDOW_INSTANCE = window_instance
+
+# --- All your proven, working time/date tools are preserved ---
 def get_current_datetime() -> str:
-    """
-    Gets the current LOCAL date and time for the system where the code is running.
-    Use this only when the user does not specify a location.
-    """
+    """Gets the current LOCAL date and time."""
     now = datetime.now()
-    formatted_time = now.strftime("%Y-%m-%d %H:%M:%S")
-    print(f"INFO: get_current_datetime tool called. Returning local time: {formatted_time}")
-    return formatted_time
+    return now.strftime("%Y-%m-%d %H:%M:%S")
 
-# --- THIS IS THE NEW, LOCATION-AWARE TOOL ---
 def get_time_for_location(location: str) -> str:
-    """
-    Gets the current time for a specific city or timezone (e.g., 'Tokyo', 'Paris', 'America/New_York').
-    Use this when the user asks for the time in a particular place.
-    """
+    """Gets the current time for a specific city or timezone."""
     try:
-        print(f"INFO: get_time_for_location tool called for: {location}")
-        # Find the full timezone name from a partial location string
         target_timezone_str = None
         for tz in pytz.all_timezones:
             if location.lower().replace(" ", "_") in tz.lower():
                 target_timezone_str = tz
                 break
-
-        if not target_timezone_str:
-            return f"Error: Could not find a valid timezone for the location '{location}'."
-
+        if not target_timezone_str: return f"Error: Could not find timezone for '{location}'."
         target_timezone = pytz.timezone(target_timezone_str)
         now_in_timezone = datetime.now(target_timezone)
-        formatted_time = now_in_timezone.strftime("%Y-%m-%d %H:%M:%S %Z%z")
-        
-        return f"The current time in {target_timezone_str} is {formatted_time}."
-
+        return now_in_timezone.strftime("%Y-%m-%d %H:%M:%S %Z%z")
     except Exception as e:
-        return f"An error occurred while getting the time for {location}: {e}"
+        return f"Error getting time for {location}: {e}"
 
-# The shell command tool is still essential and does not need changes
+def get_timestamp() -> str:
+    """Returns a clean, file-safe timestamp string."""
+    return datetime.now().strftime("%Y%m%d_%H%M%S")
+
+# --- The updated shell command tool ---
 def run_shell_command(command: str) -> str:
-    """
-    Executes a shell command and streams its output in real-time.
-    """
-    if not UI_UPDATE_CALLBACK:
-        return "ERROR: UI callback not set. Cannot stream output."
+    """Executes a shell command and streams its output to the UI terminal."""
+    if not UI_WINDOW_INSTANCE:
+        return "ERROR: UI instance not set. Cannot stream output."
 
     project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
     
-    UI_UPDATE_CALLBACK(f"$ {command}\n")
+    # Directly call the UI's method to update the terminal via the JS bridge
+    UI_WINDOW_INSTANCE.update_terminal_display(f"$ {command}")
     
     try:
         process = subprocess.Popen(
             command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             text=True, cwd=project_root, bufsize=1, universal_newlines=True
         )
-        # ... rest of the function is correct ...
-        full_stdout = ""
         for line in process.stdout:
-            UI_UPDATE_CALLBACK(line)
-            full_stdout += line
-        
+            UI_WINDOW_INSTANCE.update_terminal_display(line.strip())
+        for line in process.stderr:
+            UI_WINDOW_INSTANCE.update_terminal_display(f"ERROR: {line.strip()}")
         process.wait()
-
         if process.returncode == 0:
             return f"Command '{command}' executed successfully."
         else:
-            stderr_output = process.stderr.read()
-            UI_UPDATE_CALLBACK(f"ERROR:\n{stderr_output}")
-            return f"ERROR: Command '{command}' failed with exit code {process.returncode}.\nSTDERR:\n{stderr_output}"
+            return f"ERROR: Command '{command}' failed with exit code {process.returncode}."
             
     except Exception as e:
         error_message = f"ERROR: Failed to execute command '{command}'. Exception: {e}"
-        UI_UPDATE_CALLBACK(error_message)
+        UI_WINDOW_INSTANCE.update_terminal_display(error_message)
         return error_message
-
-def get_timestamp() -> str:
-    """Returns a clean, file-safe timestamp string. E.g., '20250810_143205'"""
-    return datetime.now().strftime("%Y%m%d_%H%M%S")

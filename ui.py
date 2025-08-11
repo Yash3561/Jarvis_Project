@@ -1,28 +1,45 @@
-# ui.py (The Final, Polished, and Complete Version)
+# ui.py (The Final, Definitive, and 100% Correct "Web Bridge" Version)
 
-import sys, os, threading, asyncio, markdown, struct, time, re
+import sys, os, threading, asyncio, markdown, re, time, struct
+from PyQt6.QtWidgets import QApplication, QMainWindow
+from PyQt6.QtCore import QObject, pyqtSlot, QUrl, pyqtSignal
+from PyQt6.QtWebEngineWidgets import QWebEngineView
+from PyQt6.QtWebChannel import QWebChannel
+
 import sounddevice as sd
 import pvporcupine
 import pyaudio
-from PyQt6.QtWidgets import QApplication, QWidget, QVBoxLayout, QHBoxLayout, QTextBrowser, QLineEdit, QPushButton
-from PyQt6.QtCore import Qt, pyqtSignal
-from PyQt6.QtGui import QTextCursor
+
 from components.audio_transcriber import AudioTranscriber
 from components import speaker
 import config
-import styles # Import our new stylesheet
 
-# --- NEW: Imports for Syntax Highlighting ---
 from pygments import highlight
-from pygments.lexers import get_lexer_by_name, guess_lexer
+from pygments.lexers import guess_lexer, get_lexer_by_name
 from pygments.formatters import HtmlFormatter
 
 PICOVOICE_KEYWORD_PATH = "jarvis_windows.ppn"
 
-class ChatWindow(QWidget):
+class Bridge(QObject):
+    def __init__(self, agent_instance, ui_window):
+        super().__init__()
+        self.agent = agent_instance
+        self.ui = ui_window
+
+    @pyqtSlot(str)
+    def process_user_query(self, query: str):
+        self.ui.process_user_query(query)
+
+    @pyqtSlot()
+    def toggle_listening(self):
+        self.ui.toggle_listening()
+    
+    def escape_for_js(self, text: str) -> str:
+        return text.replace('\\', '\\\\').replace("'", "\\'").replace('"', '\\"').replace('\n', '\\n').replace('\r', '').replace('`','\\`')
+
+class ChatWindow(QMainWindow):
     response_received = pyqtSignal(str)
     wake_word_detected_signal = pyqtSignal()
-    terminal_output_received = pyqtSignal(str)
 
     def __init__(self, agent_instance):
         super().__init__()
@@ -35,12 +52,13 @@ class ChatWindow(QWidget):
         self.audio_thread = None
         self.is_wake_word_detector_running = False
         self.wake_word_thread = None
-
+        self.code_block_count = 0
+        self.agent_thread = None
+        
         self.init_ui()
         
         self.response_received.connect(self.on_agent_response)
         self.wake_word_detected_signal.connect(self.on_wake_word_detected)
-        self.terminal_output_received.connect(self.update_terminal_display)
         
         self.start_wake_word_detector()
 
@@ -51,138 +69,125 @@ class ChatWindow(QWidget):
 
     def init_ui(self):
         self.setWindowTitle("Jarvis Co-Pilot"); self.setGeometry(300, 300, 700, 800)
-        self.setWindowFlags(Qt.WindowType.WindowStaysOnTopHint | Qt.WindowType.Tool)
-        self.setStyleSheet(styles.MAIN_WINDOW_STYLE)
+        self.setStyleSheet("background-color: #0d1117;")
         
-        self.layout = QVBoxLayout(self); self.layout.setContentsMargins(10, 10, 10, 10); self.layout.setSpacing(10)
+        self.web_view = QWebEngineView()
+        self.channel = QWebChannel()
+        self.bridge = Bridge(self.agent, self)
         
-        self.chat_display = QTextBrowser(self); self.chat_display.setOpenExternalLinks(True)
-        self.chat_display.setStyleSheet(styles.CHAT_DISPLAY_STYLE)
-        self.layout.addWidget(self.chat_display)
+        self.channel.registerObject('backend_bridge', self.bridge)
+        self.web_view.page().setWebChannel(self.channel)
         
-        input_layout = QHBoxLayout()
-        self.input_box = QLineEdit(self); self.input_box.setPlaceholderText("Ask Jarvis...")
-        self.input_box.setStyleSheet(styles.INPUT_BOX_STYLE)
-        self.input_box.returnPressed.connect(self.handle_input); input_layout.addWidget(self.input_box)
-        
-        self.listen_button = QPushButton("🎤", self); self.listen_button.setFixedSize(40, 40)
-        self.listen_button.setStyleSheet(styles.LISTEN_BUTTON_STYLE)
-        self.listen_button.clicked.connect(self.toggle_listening); input_layout.addWidget(self.listen_button)
-        self.layout.addLayout(input_layout)
-        
-        self.terminal_display = QTextBrowser(self)
-        self.terminal_display.setPlaceholderText("Jarvis's Terminal Output...")
-        self.terminal_display.setStyleSheet(styles.TERMINAL_DISPLAY_STYLE)
-        self.terminal_display.setFixedHeight(150)
-        self.layout.addWidget(self.terminal_display)
-        
-        self.add_message_to_display("system", "Jarvis is ready. Awaiting wake word...")
-
-    def update_terminal_display(self, text):
-        self.terminal_display.append(text)
-        self.terminal_display.verticalScrollBar().setValue(self.terminal_display.verticalScrollBar().maximum())
-
-    def format_code(self, code_text):
-        try:
-            lexer = guess_lexer(code_text)
-        except:
-            lexer = get_lexer_by_name("python", stripall=True)
-            
-        formatter = HtmlFormatter(style="monokai", noclasses=True) # Use inline styles
-        highlighted_code = highlight(code_text, lexer, formatter)
-        return f"<div style='background-color: #010409; border-radius: 5px; padding: 10px;'>{highlighted_code}</div>"
-
-    def add_message_to_display(self, role, text):
-        if role == 'user':
-            html = f"<p style='color: #88C0D0; margin-bottom: 5px;'><b>&gt; {text.replace('<', '&lt;')}</b></p>"
+        file_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "frontend", "index.html"))
+        if not os.path.exists(file_path):
+            self.web_view.setHtml("<h1>Error: frontend/index.html not found.</h1>")
         else:
-            # Handle code blocks first
-            parts = re.split(r"(```(?:\w+\n)?[\s\S]*?```)", text)
-            html_parts = []
-            for part in parts:
-                if part.startswith("```"):
-                    # It's a code block
-                    code_match = re.match(r"```(\w+)?\n([\s\S]*)```", part)
-                    if code_match:
-                        lang, code = code_match.groups()
-                        html_parts.append(self.format_code(code))
-                    else: # Fallback for code block without language
-                        html_parts.append(f"<pre><code>{part[3:-3]}</code></pre>")
-                else:
-                    # It's regular markdown text
-                    html_parts.append(markdown.markdown(part, extensions=['fenced_code', 'tables']))
-            html = "".join(html_parts)
+            self.web_view.setUrl(QUrl.fromLocalFile(file_path))
+        
+        self.setCentralWidget(self.web_view)
 
-        if role == 'system':
-            html = f"<div style='color: #A3BE8C; margin-bottom: 15px;'><i>{html}</i></div>"
-        
-        self.chat_display.append(html)
-        self.chat_display.verticalScrollBar().setValue(self.chat_display.verticalScrollBar().maximum())
-        
+    def run_js(self, script: str):
+        self.web_view.page().runJavaScript(script)
+
+    @pyqtSlot(str)
     def on_agent_response(self, response):
         self.is_thinking = False
-        self.listen_button.setText("🎤")
+        self.run_js("update_mic_button('idle')")
         
-        self.add_message_to_display("assistant", response)
+        display_html = self.format_response_for_html(response)
+        self.run_js(f"add_message('assistant', '{self.bridge.escape_for_js(display_html)}')")
         
         spoken_response = response
         match = re.search(r"Final Answer:(.*?)(Supporting Data:|$)", response, re.DOTALL)
-        if match:
-            spoken_response = match.group(1).strip()
+        if match: spoken_response = match.group(1).strip()
         
         speaker.speak_in_thread(spoken_response)
-        
+
         image_matches = re.findall(r'(\w+\.png)', response)
         if image_matches:
             image_path = image_matches[-1]
             if os.path.exists(image_path):
                 print(f"INFO: Found generated image '{image_path}'. Displaying in UI.")
                 abs_path = os.path.abspath(image_path).replace('\\', '/')
-                image_html = f'<p><b>Generated Image:</b></p><img src="file:///{abs_path}" alt="{image_path}" style="max-width: 100%; height: auto; border-radius: 5px;">'
-                self.chat_display.append(image_html)
+                image_html = f'<img src="file:///{abs_path}" alt="{image_path}" style="max-width: 100%; height: auto; border-radius: 10px;">'
+                self.run_js(f"add_message('assistant', '{self.bridge.escape_for_js(image_html)}')")
         
-        self.add_message_to_display("system", "Jarvis is ready. Awaiting wake word...")
+        self.run_js("add_message('system', 'Jarvis is ready. Awaiting wake word...')")
         self.start_wake_word_detector()
+
+    def format_code(self, code_text):
+        self.code_block_count += 1
+        try:
+            lexer = guess_lexer(code_text)
+        except:
+            lexer = get_lexer_by_name("text", stripall=True)
+            
+        formatter = HtmlFormatter(style="monokai", noclasses=True)
+        highlighted_code = highlight(code_text, lexer, formatter)
+        
+        escaped_code = self.bridge.escape_for_js(code_text)
+        html = f"""<div class="code-container"><button class="copy-btn" onclick="copyCode(this, `{escaped_code}`)">Copy</button><pre><code>{highlighted_code}</code></pre></div>"""
+        return html
+
+    def format_response_for_html(self, text):
+        parts = re.split(r"(```(?:\w+\n)?[\s\S]*?```)", text)
+        content_html = ""
+        for part in parts:
+            if part.startswith("```"):
+                code_match = re.match(r"```(?:\w+)?\n([\s\S]*)```", part)
+                if code_match: content_html += self.format_code(code_match.group(1).strip())
+                else: content_html += self.format_code(part[3:-3].strip())
+            else:
+                md_html = markdown.markdown(part)
+                if md_html.startswith("<p>") and md_html.endswith("</p>"): md_html = md_html[3:-4]
+                content_html += md_html
+        return content_html
+
+    def update_terminal_display(self, text):
+        self.run_js(f"add_terminal_output('{self.bridge.escape_for_js(text)}')")
 
     def process_user_query(self, query: str):
         if self.is_thinking: return
         self.is_thinking = True
-        self.listen_button.setText("🧠")
-        self.add_message_to_display("user", query)
-        self.add_message_to_display("system", "Jarvis is thinking...")
-        threading.Thread(target=self.run_agent_task, args=(query,)).start()
+        self.run_js("update_mic_button('thinking')")
+        self.run_js(f"add_message('user', '{self.bridge.escape_for_js(query)}')")
+        self.run_js("add_message('system', 'Jarvis is thinking...')")
+        self.agent_thread = threading.Thread(target=self.run_agent_task, args=(query,), daemon=True)
+        self.agent_thread.start()
 
-    def handle_input(self):
-        user_text = self.input_box.text().strip()
-        if not user_text: return
-        self.input_box.clear()
-        self.process_user_query(user_text)
+    def run_agent_task(self, question):
+        """
+        This is the definitive, correct way to run an async function 
+        from a synchronous thread.
+        """
+        try:
+            # asyncio.run() creates, manages, and closes the event loop for us.
+            # This directly solves the "no running event loop" error.
+            suggestion = asyncio.run(self.agent.ask(question))
+            self.response_received.emit(suggestion)
+        except Exception as e:
+            print(f"ERROR in run_agent_task: {e}")
+            self.response_received.emit(f"An internal error occurred: {e}")
 
     def toggle_listening(self):
         if self.is_thinking: return
-
         if not self.is_listening:
-            self.listen_button.setText("...")
-            self.listen_button.setStyleSheet(styles.LISTENING_BUTTON_STYLE)
-            self.add_message_to_display("system", "Listening... Press the mic again to stop.")
-            self.transcriber.reset_transcript()
-            self.audio_thread = threading.Thread(target=self.start_audio_backend)
-            self.audio_thread.start()
             self.is_listening = True
+            self.run_js("update_mic_button('listening')")
+            self.run_js("add_message('system', 'Listening...')")
+            self.transcriber.reset_transcript()
+            self.audio_thread = threading.Thread(target=self.start_audio_backend, daemon=True)
+            self.audio_thread.start()
         else:
-            self.listen_button.setText("🎤")
-            self.listen_button.setStyleSheet(styles.LISTEN_BUTTON_STYLE)
-            if self.is_listening:
-                self.stop_audio_backend()
-                final_transcript = self.transcriber.get_full_transcript()
-                if final_transcript:
-                    self.process_user_query(final_transcript)
-                else:
-                    self.add_message_to_display("system", "No speech detected. Awaiting wake word...")
-                    self.start_wake_word_detector()
             self.is_listening = False
-            
-    # The rest of your proven, working functions
+            self.run_js("update_mic_button('idle')")
+            self.stop_audio_backend()
+            final_transcript = self.transcriber.get_full_transcript()
+            if final_transcript: self.process_user_query(final_transcript)
+            else:
+                self.run_js("add_message('system', 'No speech detected. Awaiting wake word...')")
+                self.start_wake_word_detector()
+    
     def start_wake_word_detector(self):
         if not self.is_wake_word_detector_running:
             self.is_wake_word_detector_running = True
@@ -192,7 +197,14 @@ class ChatWindow(QWidget):
     def stop_wake_word_detector(self):
         self.is_wake_word_detector_running = False
 
+    @pyqtSlot()
+    def on_wake_word_detected(self):
+        if not self.is_listening and not self.is_thinking:
+            self.stop_wake_word_detector()
+            self.toggle_listening()
+            
     def run_wake_word_loop(self):
+        porcupine = None; pa = None; audio_stream = None
         try:
             porcupine = pvporcupine.create(access_key=config.Settings.picovoice_access_key, keyword_paths=[PICOVOICE_KEYWORD_PATH])
             pa = pyaudio.PyAudio()
@@ -208,19 +220,10 @@ class ChatWindow(QWidget):
         except Exception as e:
             print(f"Error in wake word detector thread: {e}")
         finally:
-            if 'audio_stream' in locals() and audio_stream.is_active(): audio_stream.close()
-            if 'pa' in locals(): pa.terminate()
-            if 'porcupine' in locals(): porcupine.delete()
+            if audio_stream: audio_stream.close()
+            if pa: pa.terminate()
+            if porcupine: porcupine.delete()
             print("INFO: Wake word detector shut down.")
-
-    def on_wake_word_detected(self):
-        if not self.is_listening:
-            self.stop_wake_word_detector()
-            self.toggle_listening()
-
-    def run_agent_task(self, question):
-        loop = asyncio.new_event_loop(); asyncio.set_event_loop(loop)
-        suggestion = loop.run_until_complete(self.agent.ask(question)); self.response_received.emit(suggestion)
 
     def audio_callback(self, indata, frames, time, status):
         if status: print(status, file=sys.stderr)
