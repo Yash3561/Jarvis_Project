@@ -1,6 +1,7 @@
 # agent.py (The Definitive V3 - Hierarchical Agent Architecture)
 
 import asyncio
+import threading
 from llama_index.core.agent import ReActAgent
 from llama_index.core.tools import FunctionTool
 from llama_index.core import VectorStoreIndex, SimpleDirectoryReader, Settings
@@ -74,119 +75,183 @@ class AIAgent:
 
     def _route_query(self, query: str) -> list:
         """
-        The CEO's router. It uses the LLM to decide which specialized 'department'
-        (toolset) is best suited to handle the user's query.
+        The CEO's router. This version is robust and understands verbose LLM responses.
         """
         tool_descriptions = {
-            "Coding": "Best for writing, reviewing, or executing Python code and scripts.",
-            "Web": "Best for searching the web, browsing websites, or checking facts online.",
-            "Vision": "Best for analyzing the contents of specific image files or the entire screen.",
-            "System": "Best for running general non-python shell commands (like pip, git) or getting system time.",
-            "General": "A general-purpose category for simple questions or tasks not covered by other categories."
+            "FileManagement": "For creating, reading, listing, or managing files and directories.",
+            "Coding": "For writing, reviewing, or executing Python code and scripts.",
+            "Web": "For searching the web, browsing websites, or checking facts online.",
+            "Vision": "For analyzing the contents of specific image files or the entire screen.",
+            "Memory": "For saving new information or recalling past experiences and knowledge.",
+            "System": "For running general non-python shell commands (like pip, git) or getting system time.",
+            "KnowledgeBase": "For answering questions about my personal documents (resume, strengths, etc.)."
         }
 
         prompt = f"""
-        Given the user's query, determine the single best specialized tool category to handle the request.
-        The foundational tools for file management and memory are always available. You only need to choose the specialist.
-        
-        Available specialist categories:
+        Given the user's query, determine the single best tool category to handle the request.
+        The available categories are:
         {tool_descriptions}
 
         User Query: "{query}"
 
-        Based on the query, the single most appropriate specialist category is:
+        Based on the query, the single most appropriate category is:
         """
 
         response = Settings.llm.complete(prompt)
-        chosen_category = response.text.strip().replace("'", "").replace("`", "")
+        # Clean up the response to get just the category name, just in case
+        raw_choice = response.text.strip().replace("'", "").replace("`", "")
         
-        print(f"INFO: Router chose category: '{chosen_category}' for the query.")
+        print(f"INFO: Router chose category: '{raw_choice}' for the query.")
 
-        if chosen_category == "Coding":
+        # --- THE FIX: Use 'in' instead of '==' for robust matching ---
+        # This correctly handles cases where the LLM adds extra explanations.
+        if "FileManagement" in raw_choice:
+            return self.file_management_tools
+        elif "Coding" in raw_choice:
             return self.coding_tools
-        elif chosen_category == "Web":
+        elif "Web" in raw_choice:
             return self.web_tools
-        elif chosen_category == "Vision":
+        elif "Vision" in raw_choice:
             return self.vision_tools
-        elif chosen_category == "System":
+        elif "Memory" in raw_choice:
+            return self.memory_tools
+        elif "System" in raw_choice:
             return self.system_tools
+        elif "KnowledgeBase" in raw_choice:
+            return self.knowledge_base_tools
         else:
-            # If the LLM gives a weird answer or a general question is asked,
-            # don't provide any specialist tools. The foundational tools will handle it.
-            print(f"WARN: Router chose '{chosen_category}'. Defaulting to foundational tools only.")
-            return []
+            print(f"WARN: Router returned ambiguous category '{raw_choice}'. Defaulting to general tools.")
+            # We also give it the web tools as a safe fallback for general questions.
+            return self.file_management_tools + self.system_tools + self.web_tools
+        
+    def _summarize_and_save_turn(self, query, response):
+        """
+        A background task to summarize the conversation turn and save it to long-term memory.
+        """
+        print("INFO: Auto-summarizing turn for long-term memory...")
+        try:
+            if "ERROR" in response or len(query) < 15:
+                print("INFO: Skipping memory save for short query or error.")
+                return
+
+            summarization_prompt = f"""
+            Based on the following user query and AI response, create a concise, one-sentence summary of the key fact or conclusion.
+            This summary will be saved to a long-term knowledge base.
+
+            User Query: "{query}"
+            AI Response: "{response}"
+
+            Concise Summary:
+            """
+            summary_response = Settings.llm.complete(summarization_prompt).text.strip()
+
+            # --- THE FINAL FIX ---
+            # Call save_experience with POSITIONAL arguments, not keyword arguments.
+            # The first argument is the summary, the second is the supporting data.
+            save_experience(
+                f"User asked about '{query}'. Key conclusion: {summary_response}",
+                response
+            )
+        except Exception as e:
+            print(f"WARN: Auto-summary failed. {e}")
 
     async def ask(self, question):
         """
-        The V3.2 'ask' method. It uses a final 'post-processing' step to
-        guarantee the response is correctly formatted.
+        The Definitive V4 'ask' method. It combines the CEO/Router architecture
+        with robust execution, guaranteed formatting, auto-memory, and universal
+        web access for all specialized agents.
         """
-        print(f"\n[User Query]: {question}")
-        
-        # --- Steps 1 & 2 are perfect, no changes ---
-        specialist_tools = self._route_query(question)
-        foundational_tools = self.file_management_tools + self.memory_tools
-        final_tools = list({tool.metadata.name: tool for tool in (specialist_tools + foundational_tools)}.values())
-        chat_history = self.memory.get_all()
-
-        print(f"INFO: Deploying agent with tools: {[t.metadata.name for t in final_tools]}")
-        
-        # We give the expert a simpler prompt now. Its only job is to solve the problem.
-        expert_system_prompt = (
-            "You are a task-specific expert AI. Your goal is to use your tools to find the answer to the user's request. "
-            "Provide a complete and thorough answer. Do not worry about formatting."
-        )
-
+        raw_response_str = ""  # Initialize for the 'finally' block
         try:
-            # --- STEP 3: EXECUTE ---
+            print(f"\n[User Query]: {question}")
+            
+            # --- STEP 1: ROUTE to get the specialist tools ---
+            specialist_tools = self._route_query(question)
+            
+            # --- STEP 2: ASSEMBLE the final toolkit ---
+            # All experts get access to the foundational tools: File Management, Memory, AND Web.
+            foundational_tools = (
+                self.file_management_tools + 
+                self.memory_tools + 
+                self.web_tools
+            )
+            
+            # Combine them and remove any potential duplicates.
+            final_tools = specialist_tools + foundational_tools
+            final_tools = list({tool.metadata.name: tool for tool in final_tools}.values())
+            
+            # Get conversational history for context
+            chat_history = self.memory.get_all()
+
+            # --- STEP 3: EXECUTE with the specialized agent ---
+            print(f"INFO: Deploying agent with tools: {[t.metadata.name for t in final_tools]}")
+            
+            expert_system_prompt = (
+    "You are an autonomous AI project manager. Your sole purpose is to achieve the user's objective by breaking it down into a sequence of executable steps.\n\n"
+    "## Guiding Principles:\n"
+    "1.  **Decompose:** Break down the user's request into the smallest possible, logical next step.\n"
+    "2.  **Execute:** Use one of your available tools to execute that single step.\n"
+    "3.  **Verify:** After every action, especially file creation or modification, use a tool like `list_files` or `read_file` to confirm the action was successful.\n"
+    "4.  **Iterate:** Continue this Decompose -> Execute -> Verify loop until the user's entire objective is complete.\n"
+    "5.  **Report:** Only provide the final, complete answer after all steps have been successfully executed and verified.\n\n"
+    "Your task is to manage and execute the user's project from start to finish."
+)
+
+            # Create the agent using the direct, stable constructor
             specialized_agent = ReActAgent(
                 tools=final_tools,
                 llm=Settings.llm,
                 verbose=True,
                 system_prompt=expert_system_prompt
             )
+
+            # Use the proven V2 execution pattern: call .run() and await the handler
             response_handler = specialized_agent.run(question, chat_history=chat_history)
             raw_response_str = str(await response_handler)
 
-            # --- STEP 4: POST-PROCESS AND FORMAT (THE FIX) ---
+            # --- STEP 4: POST-PROCESS AND FORMAT ---
             print("INFO: Post-processing final response for formatting...")
             
             formatting_prompt = f"""
-            You are a formatting assistant. Your task is to take a raw response from an AI agent and format it into a strict XML template.
+            You are a formatting assistant...
+            The original user query was: "{question}"
 
             ## Raw Agent Response ##
             {raw_response_str}
 
             ## Instructions ##
-            Based on the raw response, fill out the following template.
-            - The SPOKEN_SUMMARY should be a single, concise sentence.
-            - For code, the summary should be "I have generated the code as requested."
-            - The FULL_RESPONSE should contain all the details, including any markdown code blocks.
+            ...
+            - The FULL_RESPONSE should contain all the details...
+            - **CRITICAL:** If the response mentions creating an image file (like a .png), you MUST include the filename in the FULL_RESPONSE so the UI can display it.
 
             ## RESPONSE TEMPLATE ##
-            <SPOKEN_SUMMARY>
-                (Your one-sentence summary here)
-            </SPOKEN_SUMMARY>
-
-            <FULL_RESPONSE>
-                (The full, detailed response here)
-            </FULL_RESPONSE>
+            <SPOKEN_SUMMARY>...</SPOKEN_SUMMARY>
+            <FULL_RESPONSE>...</FULL_RESPONSE>
             """
 
-            # Make a direct, final LLM call to do the formatting
             final_formatted_response = Settings.llm.complete(formatting_prompt).text
-
-            # Update memory with the RAW response so the agent remembers what it actually did
+            
+            # Update short-term memory with the RAW response for context
             self.memory.put(ChatMessage(role=MessageRole.USER, content=question))
             self.memory.put(ChatMessage(role=MessageRole.ASSISTANT, content=raw_response_str))
             
-            # Return the BEAUTIFUL formatted response to the UI
+            # Return the beautifully formatted response to the UI
             return final_formatted_response
 
         except Exception as e:
             import traceback
             traceback.print_exc()
             return f"ERROR during specialized agent execution: {e}"
+        
+        finally:
+            # --- STEP 5: AUTO-MEMORY (in the background) ---
+            if raw_response_str:
+                memory_thread = threading.Thread(
+                    target=self._summarize_and_save_turn, 
+                    args=(question, raw_response_str), 
+                    daemon=True
+                )
+                memory_thread.start()
         
     def reset_memory(self):
         self.memory.reset()
