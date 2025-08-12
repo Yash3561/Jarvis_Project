@@ -118,50 +118,71 @@ class AIAgent:
 
     async def ask(self, question):
         """
-        The V3.1 'ask' method. It uses the V3 router with the proven V2 execution logic.
+        The V3.2 'ask' method. It uses a final 'post-processing' step to
+        guarantee the response is correctly formatted.
         """
         print(f"\n[User Query]: {question}")
         
-        # --- STEP 1 & 2: ROUTE AND ASSEMBLE (This part is working perfectly) ---
+        # --- Steps 1 & 2 are perfect, no changes ---
         specialist_tools = self._route_query(question)
         foundational_tools = self.file_management_tools + self.memory_tools
-        final_tools = specialist_tools + foundational_tools
-        final_tools = list({tool.metadata.name: tool for tool in final_tools}.values())
-        
+        final_tools = list({tool.metadata.name: tool for tool in (specialist_tools + foundational_tools)}.values())
         chat_history = self.memory.get_all()
 
-        # --- STEP 3: EXECUTE (This is the corrected part) ---
         print(f"INFO: Deploying agent with tools: {[t.metadata.name for t in final_tools]}")
         
-        agent_system_prompt = (
-            "You are a helpful and efficient AI assistant. Your goal is to complete the user's request using only your provided tools. "
-            "You have access to foundational tools for file management and memory, and specialist tools for your current task. "
-            "Think step-by-step and be precise."
+        # We give the expert a simpler prompt now. Its only job is to solve the problem.
+        expert_system_prompt = (
+            "You are a task-specific expert AI. Your goal is to use your tools to find the answer to the user's request. "
+            "Provide a complete and thorough answer. Do not worry about formatting."
         )
 
         try:
-            # --- THE PROVEN EXECUTION PATTERN ---
-
-            # Step 3a: Create the agent with the direct, stable constructor.
+            # --- STEP 3: EXECUTE ---
             specialized_agent = ReActAgent(
                 tools=final_tools,
                 llm=Settings.llm,
                 verbose=True,
-                system_prompt=agent_system_prompt
+                system_prompt=expert_system_prompt
             )
-
-            # Step 3b: Call the synchronous .run() method. It returns a handler.
             response_handler = specialized_agent.run(question, chat_history=chat_history)
+            raw_response_str = str(await response_handler)
 
-            # Step 3c: Await the handler to get the final result. This is the key.
-            final_result = await response_handler
-
-            # Step 3d: The result is now safely set.
-            response_str = str(final_result)
+            # --- STEP 4: POST-PROCESS AND FORMAT (THE FIX) ---
+            print("INFO: Post-processing final response for formatting...")
             
+            formatting_prompt = f"""
+            You are a formatting assistant. Your task is to take a raw response from an AI agent and format it into a strict XML template.
+
+            ## Raw Agent Response ##
+            {raw_response_str}
+
+            ## Instructions ##
+            Based on the raw response, fill out the following template.
+            - The SPOKEN_SUMMARY should be a single, concise sentence.
+            - For code, the summary should be "I have generated the code as requested."
+            - The FULL_RESPONSE should contain all the details, including any markdown code blocks.
+
+            ## RESPONSE TEMPLATE ##
+            <SPOKEN_SUMMARY>
+                (Your one-sentence summary here)
+            </SPOKEN_SUMMARY>
+
+            <FULL_RESPONSE>
+                (The full, detailed response here)
+            </FULL_RESPONSE>
+            """
+
+            # Make a direct, final LLM call to do the formatting
+            final_formatted_response = Settings.llm.complete(formatting_prompt).text
+
+            # Update memory with the RAW response so the agent remembers what it actually did
             self.memory.put(ChatMessage(role=MessageRole.USER, content=question))
-            self.memory.put(ChatMessage(role=MessageRole.ASSISTANT, content=response_str))
-            return response_str
+            self.memory.put(ChatMessage(role=MessageRole.ASSISTANT, content=raw_response_str))
+            
+            # Return the BEAUTIFUL formatted response to the UI
+            return final_formatted_response
+
         except Exception as e:
             import traceback
             traceback.print_exc()

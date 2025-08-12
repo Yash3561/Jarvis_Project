@@ -34,8 +34,19 @@ class Bridge(QObject):
     def toggle_listening(self):
         self.ui.toggle_listening()
     
+    # This was the old, aggressive escaping function. We'll leave it for now.
     def escape_for_js(self, text: str) -> str:
         return text.replace('\\', '\\\\').replace("'", "\\'").replace('"', '\\"').replace('\n', '\\n').replace('\r', '').replace('`','\\`')
+
+    # --- THE MISSING FUNCTION ---
+    # Add this new method. It's safer for passing complex HTML via template literals.
+    def escape_for_js_template(self, text: str) -> str:
+        return text.replace('\\', '\\\\').replace('`', '\\`').replace('$', '\\$')
+
+    # This is for the mute button functionality
+    @pyqtSlot(bool)
+    def toggle_mute(self, is_muted):
+        self.ui.toggle_mute(is_muted)
 
 class ChatWindow(QMainWindow):
     response_received = pyqtSignal(str)
@@ -108,29 +119,51 @@ class ChatWindow(QMainWindow):
         """
         self.terminal_output_received.emit(text)
     
+    @pyqtSlot(str)
     def on_agent_response(self, response):
         self.is_thinking = False
         self.run_js("update_mic_button('idle')")
-        
-        display_html = self.format_response_for_html(response)
-        self.run_js(f"add_message('assistant', '{self.bridge.escape_for_js(display_html)}')")
-        
-        spoken_response = response
-        match = re.search(r"Final Answer:(.*?)(Supporting Data:|$)", response, re.DOTALL)
-        if match: spoken_response = match.group(1).strip()
-        
-        speaker.speak_in_thread(spoken_response)
 
-        image_matches = re.findall(r'(\w+\.png)', response)
+        # --- The Definitive Parsing Logic ---
+        spoken_summary = "I have completed the task."
+        full_response_for_display = response
+        
+        summary_match = re.search(r"<SPOKEN_SUMMARY>(.*?)</SPOKEN_SUMMARY>", response, re.DOTALL)
+        full_match = re.search(r"<FULL_RESPONSE>(.*?)</FULL_RESPONSE>", response, re.DOTALL)
+
+        if summary_match and full_match:
+            spoken_summary = summary_match.group(1).strip()
+            full_response_for_display = full_match.group(1).strip()
+        else:
+            print("WARN: Agent response was not in the expected XML format. Displaying raw response.")
+
+        raw_text_for_copying = full_response_for_display
+
+        # --- Send Clean Data to the Right Places ---
+        display_html = self.format_response_for_html(full_response_for_display)
+        
+        # We use the ORIGINAL escape function now, as backticks can conflict with markdown
+        escaped_html = self.bridge.escape_for_js_template(display_html)
+        escaped_raw_text = self.bridge.escape_for_js_template(raw_text_for_copying)
+
+        # Use backticks ` ` for the JS call
+        self.run_js(f"add_message('assistant', `{escaped_html}`, `{escaped_raw_text}`)")
+        
+        speaker.speak_in_thread(spoken_summary)
+
+        # Handle image display
+        image_matches = re.findall(r'(\w+\.png)', full_response_for_display)
         if image_matches:
             image_path = image_matches[-1]
             if os.path.exists(image_path):
                 print(f"INFO: Found generated image '{image_path}'. Displaying in UI.")
                 abs_path = os.path.abspath(image_path).replace('\\', '/')
                 image_html = f'<img src="file:///{abs_path}" alt="{image_path}" style="max-width: 100%; height: auto; border-radius: 10px;">'
-                self.run_js(f"add_message('assistant', '{self.bridge.escape_for_js(image_html)}')")
+                self.run_js(f"add_message('assistant', '{self.bridge.escape_for_js(image_html)}', '')")
         
+        # --- The Final, Corrected Step ---
         self.run_js("add_message('system', 'Jarvis is ready. Awaiting wake word...')")
+        # THE CRITICAL FIX: Restart the actual wake word detector process.
         self.start_wake_word_detector()
 
     def format_code(self, code_text):
@@ -140,11 +173,21 @@ class ChatWindow(QMainWindow):
         except:
             lexer = get_lexer_by_name("text", stripall=True)
             
+        # Using a style that matches the dark theme well
         formatter = HtmlFormatter(style="monokai", noclasses=True)
         highlighted_code = highlight(code_text, lexer, formatter)
         
-        escaped_code = self.bridge.escape_for_js(code_text)
-        html = f"""<div class="code-container"><button class="copy-btn" onclick="copyCode(this, `{escaped_code}`)">Copy</button><pre><code>{highlighted_code}</code></pre></div>"""
+        # --- THE FIX: The button now calls the new JS function ---
+        # The JS function will handle finding the code to copy.
+        # This is more reliable than passing the text in the onclick attribute.
+        # escaped_code = self.bridge.escape_for_js(code_text)
+        
+        html = f"""
+        <pre>
+            <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
+            <code>{highlighted_code}</code>
+        </pre>
+        """
         return html
 
     def format_response_for_html(self, text):
@@ -165,7 +208,10 @@ class ChatWindow(QMainWindow):
         if self.is_thinking: return
         self.is_thinking = True
         self.run_js("update_mic_button('thinking')")
-        self.run_js(f"add_message('user', '{self.bridge.escape_for_js(query)}')")
+        
+        escaped_query = self.bridge.escape_for_js_template(query)
+        self.run_js(f"add_message('user', `{escaped_query}`, `{escaped_query}`)")
+        
         self.run_js("add_message('system', 'Jarvis is thinking...')")
         self.agent_thread = threading.Thread(target=self.run_agent_task, args=(query,), daemon=True)
         self.agent_thread.start()
