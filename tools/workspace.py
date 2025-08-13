@@ -1,4 +1,4 @@
-# tools/workspace.py (The new core execution engine)
+# tools/workspace.py (The Final, Corrected Version)
 
 import subprocess
 import threading
@@ -17,6 +17,7 @@ class ManagedTerminal:
         self.process = None
         self.is_running = True
         self.last_prompt = ""
+        self.output_queue = queue.Queue() # This is correct.
         self._start_process()
 
         threading.Thread(target=self._read_output, args=(self.process.stdout,), daemon=True).start()
@@ -40,53 +41,46 @@ class ManagedTerminal:
             try:
                 line = pipe.readline()
                 if line:
-                    stripped_line = line.strip()
-                    # Check if this line is a new prompt
-                    if re.match(r"^[A-Z]:\\.*>", stripped_line):
-                        self.last_prompt = stripped_line
-                    self.log(stripped_line)
+                    self.log(line.strip())
                 else:
-                    break
-            except:
-                break
+                    break # Pipe has closed
+            except Exception:
+                break # An error occurred, likely the pipe closing
 
+    # --- THIS IS THE SINGLE, CORRECT LOG METHOD ---
     def log(self, message: str):
         """Sends output to both the internal queue and the UI callback."""
         self.output_queue.put(message)
         if self.output_callback:
-            # Prefix the message with the terminal name for the UI
             self.output_callback(f"[{self.name}] {message}")
+    # --- THE DUPLICATE METHOD HAS BEEN REMOVED ---
 
-    def log(self, message: str):
-        """A simple pass-through to the UI callback."""
-        if self.output_callback:
-            self.output_callback(f"[{self.name}] {message}")
-
-    def run_command(self, command: str, timeout: int = 300) -> str: # Longer base timeout
+    def run_command(self, command: str, timeout: int = 300) -> str:
         """Sends a command and waits for it to complete by detecting idle output."""
         if not self.is_running or self.process.poll() is not None:
             return "ERROR: Terminal process is not running."
 
+        # Clear any old output from the queue before starting
         while not self.output_queue.empty(): self.output_queue.get()
         
-        self.log(f"> {command}")
+        self.log(f"> {command}") # This now correctly logs the command to the queue AND UI
         self.process.stdin.write(command + '\n')
         self.process.stdin.flush()
         
         output_lines = []
         last_output_time = time.time()
         
-        # This loop will run as long as new output is being produced
+        # This loop will now work because the queue receives data
         while True:
             try:
-                line = self.output_queue.get(timeout=1) # Wait 1s for a line
+                line = self.output_queue.get(timeout=1)
+                # Don't log the line here again, _read_output's call to self.log already did.
                 output_lines.append(line)
-                self.log(line)
-                last_output_time = time.time() # Reset idle timer on new output
+                last_output_time = time.time()
             except queue.Empty:
-                # If 30 seconds have passed with no new output, assume it's done.
-                if time.time() - last_output_time > 30.0:
-                    self.log("[SYSTEM] Command finished due to inactivity.")
+                idle_duration = 5.0 # A reasonable time to wait for inactivity
+                if time.time() - last_output_time > idle_duration:
+                    self.log(f"[SYSTEM] Command finished after {idle_duration}s of inactivity.")
                     break
         
         return "\n".join(output_lines)
@@ -100,9 +94,7 @@ class ManagedTerminal:
         self.process.stdin.write(command + '\n')
         self.process.stdin.flush()
         
-        # Give it a moment to start up and log initial messages
-        time.sleep(5)
-        
+        time.sleep(3) # Give it a moment to start up
         return f"Server command '{command}' has been sent to the terminal to run in the background."
 
     def close(self):
@@ -110,10 +102,11 @@ class ManagedTerminal:
             self.is_running = False
             try:
                 if platform.system() == "Windows":
-                    subprocess.run(f"taskkill /F /PID {self.process.pid} /T", check=True, capture_output=True)
+                    # Force kill the entire process tree
+                    subprocess.run(f"taskkill /F /PID {self.process.pid} /T", check=True, capture_output=True, text=True)
                 else:
                     self.process.terminate()
-                self.process.wait(timeout=2)
+                self.process.wait(timeout=5)
             except Exception as e:
                 print(f"Warning: Could not cleanly terminate terminal '{self.name}': {e}")
             self.log("Terminal closed.")
@@ -123,16 +116,15 @@ class Workspace:
     """Manages a collection of named terminals for a project."""
     def __init__(self, base_directory: str, output_callback=None):
         self.base_directory = base_directory
+        os.makedirs(self.base_directory, exist_ok=True)
         self.output_callback = output_callback
         self.terminals = {}
-        # Always start with a default terminal
         self.create_terminal("default")
 
     def create_terminal(self, name: str) -> str:
         if name in self.terminals:
             return f"Error: A terminal with the name '{name}' already exists."
         
-        # New terminals start in the project's base directory
         self.terminals[name] = ManagedTerminal(name, self.base_directory, self.output_callback)
         return f"Terminal '{name}' created successfully."
 
@@ -159,6 +151,8 @@ def initialize_workspace(base_directory: str, output_callback=None) -> Workspace
     return WORKSPACE_INSTANCE
 
 def get_workspace() -> Workspace:
+    if WORKSPACE_INSTANCE is None:
+        raise Exception("Workspace has not been initialized. Call initialize_workspace() first.")
     return WORKSPACE_INSTANCE
 
 def close_workspace():

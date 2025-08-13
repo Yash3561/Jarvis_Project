@@ -2,6 +2,7 @@
 
 import os
 import shutil
+from .workspace import get_workspace
 
 def list_files_in_directory(directory_path: str = ".") -> str:
     """
@@ -21,15 +22,24 @@ def list_files_in_directory(directory_path: str = ".") -> str:
         return f"An error occurred while listing files: {e}"
 
 def write_to_file(file_path: str, content: str) -> str:
-    """Writes the given content to a specified file path."""
+    """
+    Writes content to a file *relative to the active workspace root*.
+    Creates subdirectories if they don't exist.
+    """
+    workspace = get_workspace()
+    if not workspace:
+        return "ERROR: Workspace not initialized. Cannot write file."
+
+    # Construct the full, absolute path from the workspace root and the relative path
+    absolute_path = os.path.join(workspace.base_directory, file_path)
+    
     try:
-        # Ensure parent directory exists
-        os.makedirs(os.path.dirname(file_path), exist_ok=True)
-        with open(file_path, 'w', encoding='utf-8') as f:
+        os.makedirs(os.path.dirname(absolute_path), exist_ok=True)
+        with open(absolute_path, 'w', encoding='utf-8') as f:
             f.write(content)
-        return f"Successfully wrote content to {file_path}"
+        return f"Successfully wrote {len(content)} bytes to {absolute_path}"
     except Exception as e:
-        return f"An error occurred while writing to file: {e}"
+        return f"ERROR: Failed to write to file {absolute_path}. Reason: {e}"
 
 # --- THIS IS THE NEW TOOL ---
 def read_file_content(file_path: str) -> str:
