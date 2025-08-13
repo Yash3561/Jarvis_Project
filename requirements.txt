@@ -31,4 +31,7 @@ webdriver-manager
 pyttsx3
 pytz
 
+pyautogui
+pyperclip
+
 

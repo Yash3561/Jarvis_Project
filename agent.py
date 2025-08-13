@@ -15,7 +15,7 @@ from tools.web_search import search_the_web
 from tools.code_writer import generate_code, review_and_refine_code
 from tools.system_commands import run_shell_command, get_current_datetime, get_time_for_location, get_timestamp
 from tools.browser_tool import browse_and_summarize_website
-from tools.browser_automation import navigate, type_text, click, extract_text_from_element
+from tools.browser_automation import navigate, type_text, click, extract_text_from_element, open_url_in_browser
 from tools.persistent_terminal import run_in_terminal
 from tools.long_term_memory import save_experience, recall_experiences
 from tools.script_runner import run_python_script
@@ -43,6 +43,7 @@ class AIAgent:
             FunctionTool.from_defaults(fn=navigate, name="navigate_to_url"),
             FunctionTool.from_defaults(fn=type_text, name="type_into_browser"),
             FunctionTool.from_defaults(fn=click, name="click_browser_element"),
+            FunctionTool.from_defaults(fn=open_url_in_browser, name="open_url_in_browser")
         ]
         
         self.vision_tools = [
@@ -99,29 +100,27 @@ class AIAgent:
             "Web": "For searching the web, browsing websites, or checking facts online.",
             "Vision": "For analyzing the contents of specific image files or the entire screen.",
             "Memory": "For saving new information or recalling past experiences and knowledge.",
-             "System": "For creating or interacting with stateful, named terminal sessions using commands like `create_terminal` and `run_command`.",
+            "System": "For creating or interacting with stateful, named terminal sessions using commands like `create_terminal` and `run_command`.",
             "KnowledgeBase": "For answering questions about my personal documents (resume, strengths, etc.).",
             "ProcessManagement": "For starting, stopping, or checking long-running background processes like web servers.",
+            "Desktop": "For interacting with the user's local desktop environment, such as opening a web browser to a specific URL.",
         }
 
         prompt = f"""
-        Given the user's query, determine the single best tool category to handle the request.
-        The available categories are:
-        {tool_descriptions}
+    Given the user's query OR a step in a plan, determine the single best tool category to handle the request.
+    The available categories are:
+    {tool_descriptions}
 
-        User Query: "{query}"
+    User Query/Plan Step: "{query}"
 
-        Based on the query, the single most appropriate category is:
-        """
+    Based on the request, the single most appropriate category is:
+    """
 
         response = Settings.llm.complete(prompt)
-        # Clean up the response to get just the category name, just in case
         raw_choice = response.text.strip().replace("'", "").replace("`", "")
         
         print(f"INFO: Router chose category: '{raw_choice}' for the query.")
 
-        # --- THE FIX: Use 'in' instead of '==' for robust matching ---
-        # This correctly handles cases where the LLM adds extra explanations.
         if "FileManagement" in raw_choice:
             return self.file_management_tools
         elif "Coding" in raw_choice:
@@ -134,13 +133,19 @@ class AIAgent:
             return self.memory_tools
         elif "System" in raw_choice:
             return self.system_tools
-        elif "KnowledgeBase" in raw_choice:
-            return self.knowledge_base_tools
+            
+        # --- ADD THIS NEW ROUTE ---
+        elif "Desktop" in raw_choice:
+            return self.desktop_tools
+            
         else:
             print(f"WARN: Router returned ambiguous category '{raw_choice}'. Defaulting to general tools.")
-            # We also give it the web tools as a safe fallback for general questions.
             return self.file_management_tools + self.system_tools + self.web_tools
         
+    def open_url_in_browser(self, url: str) -> str:
+        """A direct pass-through to the browser tool for the controller."""
+        return open_url_in_browser(url)
+    
     def run_in_terminal(self, command: str) -> str:
         """A direct pass-through to the terminal tool for the controller."""
         return run_in_terminal(command)

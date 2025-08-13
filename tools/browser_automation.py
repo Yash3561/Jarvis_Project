@@ -7,6 +7,7 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from webdriver_manager.chrome import ChromeDriverManager
 import time
+import webbrowser
 
 class BrowserController:
     def __init__(self):
@@ -132,3 +133,11 @@ def extract_text_from_element(url: str, selector: str) -> str:
             return f"Extracted text: '{text}'"
         except Exception as e:
             return f"Error extracting text: {e}"
+        
+def open_url_in_browser(url: str) -> str:
+    """Opens the specified URL in the user's default web browser."""
+    try:
+        webbrowser.open(url, new=2) # new=2 opens in a new tab
+        return f"Successfully opened {url} in the browser."
+    except Exception as e:
+        return f"Error opening URL: {e}"

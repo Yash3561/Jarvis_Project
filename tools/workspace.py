@@ -16,7 +16,7 @@ class ManagedTerminal:
         self.output_callback = output_callback
         self.process = None
         self.is_running = True
-        self.last_prompt = "" # To store the last seen prompt
+        self.last_prompt = ""
         self._start_process()
 
         threading.Thread(target=self._read_output, args=(self.process.stdout,), daemon=True).start()
@@ -32,7 +32,7 @@ class ManagedTerminal:
             text=True, cwd=self.cwd, bufsize=1, universal_newlines=True,
             encoding='utf-8', errors='replace'
         )
-        self.log(f"Process started with PID {self.process.pid} in {self.cwd}")
+        self.log(f"Headless terminal '{self.name}' started with PID {self.process.pid}")
 
     def _read_output(self, pipe):
         """The ONLY function that reads from the process and logs to the UI."""
@@ -62,34 +62,48 @@ class ManagedTerminal:
         if self.output_callback:
             self.output_callback(f"[{self.name}] {message}")
 
-    def run_command(self, command: str, timeout: int = 180) -> str:
-        """Sends a command and WAITS for it to complete by polling for a new prompt."""
+    def run_command(self, command: str, timeout: int = 300) -> str: # Longer base timeout
+        """Sends a command and waits for it to complete by detecting idle output."""
         if not self.is_running or self.process.poll() is not None:
             return "ERROR: Terminal process is not running."
-        
-        # Clear the last seen prompt so we can detect a new one
-        current_prompt = self.last_prompt
-        self.last_prompt = ""
+
+        while not self.output_queue.empty(): self.output_queue.get()
         
         self.log(f"> {command}")
         self.process.stdin.write(command + '\n')
         self.process.stdin.flush()
         
-        start_time = time.time()
-        while time.time() - start_time < timeout:
-            # Check if a new prompt has appeared since we started
-            if self.last_prompt and self.last_prompt != current_prompt:
-                return f"Command '{command}' appears to have completed."
-            
-            # Also handle interactive prompts from tools like Vite
-            # This is a simplification; a more robust solution would be needed for complex interactions.
-            if "select a framework" in self.last_prompt.lower():
-                 self.process.stdin.write('\n') # Send "Enter" to accept default
-                 self.process.stdin.flush()
+        output_lines = []
+        last_output_time = time.time()
+        
+        # This loop will run as long as new output is being produced
+        while True:
+            try:
+                line = self.output_queue.get(timeout=1) # Wait 1s for a line
+                output_lines.append(line)
+                self.log(line)
+                last_output_time = time.time() # Reset idle timer on new output
+            except queue.Empty:
+                # If 30 seconds have passed with no new output, assume it's done.
+                if time.time() - last_output_time > 30.0:
+                    self.log("[SYSTEM] Command finished due to inactivity.")
+                    break
+        
+        return "\n".join(output_lines)
 
-            time.sleep(0.5) # Don't busy-wait
-
-        return f"Command '{command}' timed out after {timeout} seconds."
+    def start_server_command(self, command: str) -> str:
+        """Sends a command to start a server and does NOT wait for it to finish."""
+        if not self.is_running or self.process.poll() is not None:
+            return "ERROR: Terminal process is not running."
+        
+        self.log(f"> {command}")
+        self.process.stdin.write(command + '\n')
+        self.process.stdin.flush()
+        
+        # Give it a moment to start up and log initial messages
+        time.sleep(5)
+        
+        return f"Server command '{command}' has been sent to the terminal to run in the background."
 
     def close(self):
         if self.is_running:
