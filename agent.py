@@ -21,6 +21,9 @@ from tools.long_term_memory import save_experience, recall_experiences
 from tools.script_runner import run_python_script
 from tools.process_manager import start_background_process, check_process_status, stop_background_process
 
+# ADD the new, consolidated tool imports
+from tools.workspace_tools import create_terminal, run_command
+
 class AIAgent:
     def __init__(self, data_directory="./data"):
         print("INFO: V3 Agent Initializing: Setting up expert toolsets...")
@@ -63,6 +66,7 @@ class AIAgent:
         
         self.system_tools = [
             FunctionTool.from_defaults(fn=run_shell_command, name="run_shell_command"),
+            FunctionTool.from_defaults(fn=create_terminal, name="create_terminal"),
             FunctionTool.from_defaults(fn=get_current_datetime, name="get_current_datetime"),
         ]
         
@@ -95,7 +99,7 @@ class AIAgent:
             "Web": "For searching the web, browsing websites, or checking facts online.",
             "Vision": "For analyzing the contents of specific image files or the entire screen.",
             "Memory": "For saving new information or recalling past experiences and knowledge.",
-            "System": "For running general non-python shell commands (like pip, git) or getting system time.",
+             "System": "For creating or interacting with stateful, named terminal sessions using commands like `create_terminal` and `run_command`.",
             "KnowledgeBase": "For answering questions about my personal documents (resume, strengths, etc.).",
             "ProcessManagement": "For starting, stopping, or checking long-running background processes like web servers.",
         }
@@ -140,6 +144,14 @@ class AIAgent:
     def run_in_terminal(self, command: str) -> str:
         """A direct pass-through to the terminal tool for the controller."""
         return run_in_terminal(command)
+    
+    def create_terminal(self, name: str) -> str:
+        """Direct pass-through to the workspace tool for the controller."""
+        return create_terminal(name)
+
+    def run_command(self, command: str, terminal_name: str = "default") -> str:
+        """Direct pass-through to the workspace tool for the controller."""
+        return run_command(command, terminal_name)
     
     def _summarize_and_save_turn(self, query, response):
         """
