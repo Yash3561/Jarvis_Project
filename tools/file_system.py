@@ -21,11 +21,10 @@ def list_files_in_directory(directory_path: str = ".") -> str:
         return f"An error occurred while listing files: {e}"
 
 def write_to_file(file_path: str, content: str) -> str:
-    """
-    Writes the given content to a specified file.
-    This will create the file if it doesn't exist, and overwrite it if it does.
-    """
+    """Writes the given content to a specified file path."""
     try:
+        # Ensure parent directory exists
+        os.makedirs(os.path.dirname(file_path), exist_ok=True)
         with open(file_path, 'w', encoding='utf-8') as f:
             f.write(content)
         return f"Successfully wrote content to {file_path}"

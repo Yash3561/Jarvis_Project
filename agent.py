@@ -16,8 +16,10 @@ from tools.code_writer import generate_code, review_and_refine_code
 from tools.system_commands import run_shell_command, get_current_datetime, get_time_for_location, get_timestamp
 from tools.browser_tool import browse_and_summarize_website
 from tools.browser_automation import navigate, type_text, click, extract_text_from_element
+from tools.persistent_terminal import run_in_terminal
 from tools.long_term_memory import save_experience, recall_experiences
 from tools.script_runner import run_python_script
+from tools.process_manager import start_background_process, check_process_status, stop_background_process
 
 class AIAgent:
     def __init__(self, data_directory="./data"):
@@ -50,7 +52,7 @@ class AIAgent:
             FunctionTool.from_defaults(fn=list_files_in_directory, name="list_files"),
             FunctionTool.from_defaults(fn=read_file_content, name="read_file"),
             FunctionTool.from_defaults(fn=write_to_file, name="write_file"),
-            FunctionTool.from_defaults(fn=create_directory, name="create_directory"),
+            # FunctionTool.from_defaults(fn=create_directory, name="create_directory"),
         ]
 
         self.memory_tools = [
@@ -64,9 +66,19 @@ class AIAgent:
             FunctionTool.from_defaults(fn=get_current_datetime, name="get_current_datetime"),
         ]
         
+        self.process_management_tools = [
+            FunctionTool.from_defaults(fn=start_background_process),
+            FunctionTool.from_defaults(fn=check_process_status),
+            FunctionTool.from_defaults(fn=stop_background_process),
+        ]
+        
         # This is the short-term conversation memory
         self.memory = ChatMemoryBuffer.from_defaults(token_limit=8000)
 
+    def write_file(self, file_path: str, content: str) -> str:
+        """A direct pass-through to the file writing tool for the controller."""
+        return write_to_file(file_path, content)
+    
     def _get_personal_query_engine(self, data_directory):
         print("INFO: Loading knowledge from personal documents...")
         documents = SimpleDirectoryReader(data_directory).load_data()
@@ -84,7 +96,8 @@ class AIAgent:
             "Vision": "For analyzing the contents of specific image files or the entire screen.",
             "Memory": "For saving new information or recalling past experiences and knowledge.",
             "System": "For running general non-python shell commands (like pip, git) or getting system time.",
-            "KnowledgeBase": "For answering questions about my personal documents (resume, strengths, etc.)."
+            "KnowledgeBase": "For answering questions about my personal documents (resume, strengths, etc.).",
+            "ProcessManagement": "For starting, stopping, or checking long-running background processes like web servers.",
         }
 
         prompt = f"""
@@ -124,6 +137,10 @@ class AIAgent:
             # We also give it the web tools as a safe fallback for general questions.
             return self.file_management_tools + self.system_tools + self.web_tools
         
+    def run_in_terminal(self, command: str) -> str:
+        """A direct pass-through to the terminal tool for the controller."""
+        return run_in_terminal(command)
+    
     def _summarize_and_save_turn(self, query, response):
         """
         A background task to summarize the conversation turn and save it to long-term memory.
@@ -198,36 +215,39 @@ class AIAgent:
 )
 
             # Create the agent using the direct, stable constructor
-            specialized_agent = ReActAgent(
+            agent = ReActAgent(
                 tools=final_tools,
                 llm=Settings.llm,
                 verbose=True,
                 system_prompt=expert_system_prompt
             )
 
-            # Use the proven V2 execution pattern: call .run() and await the handler
-            response_handler = specialized_agent.run(question, chat_history=chat_history)
+            response_handler = agent.run(question, chat_history=chat_history)
             raw_response_str = str(await response_handler)
 
-            # --- STEP 4: POST-PROCESS AND FORMAT ---
+                        # --- STEP 4: POST-PROCESS AND FORMAT ---
             print("INFO: Post-processing final response for formatting...")
             
             formatting_prompt = f"""
-            You are a formatting assistant...
-            The original user query was: "{question}"
+You are a formatting assistant. Your job is to take a raw response from an AI agent and reformat it into a clean, two-part response for a user interface.
 
-            ## Raw Agent Response ##
-            {raw_response_str}
+## Guiding Principles:
+1.  **Spoken Summary:** Create a concise, conversational, one-sentence summary of the action taken. This is what the text-to-speech engine will say. It should sound natural, like a helpful assistant reporting back. Start with phrases like "Okay, I've...", "Done. The...", "Here is the...". Do NOT include markdown like backticks or asterisks.
+2.  **Full Response:** This is the detailed, written response for the user to read. Preserve all important details, code blocks, and file names from the raw response. Format it nicely using Markdown. Use code blocks (```) for code and file contents.
 
-            ## Instructions ##
-            ...
-            - The FULL_RESPONSE should contain all the details...
-            - **CRITICAL:** If the response mentions creating an image file (like a .png), you MUST include the filename in the FULL_RESPONSE so the UI can display it.
+## Raw Agent Response ##
+{raw_response_str}
 
-            ## RESPONSE TEMPLATE ##
-            <SPOKEN_SUMMARY>...</SPOKEN_SUMMARY>
-            <FULL_RESPONSE>...</FULL_RESPONSE>
-            """
+## Instructions ##
+- Analyze the Raw Agent Response.
+- Create a spoken summary and a detailed full response based on the principles above.
+- If the raw response is a simple greeting or a short answer, the spoken and full responses can be similar.
+- **CRITICAL:** If the raw response mentions creating an image or a file (e.g., "Saved to population_chart.png"), you MUST include that exact filename in the FULL_RESPONSE so the UI can find and display it.
+
+## RESPONSE TEMPLATE (Use this exact format) ##
+<SPOKEN_SUMMARY>A brief, friendly summary of what was done.</SPOKEN_SUMMARY>
+<FULL_RESPONSE>The full, detailed, markdown-formatted answer with all necessary information and code blocks.</FULL_RESPONSE>
+"""
 
             final_formatted_response = Settings.llm.complete(formatting_prompt).text
             
@@ -252,6 +272,44 @@ class AIAgent:
                     daemon=True
                 )
                 memory_thread.start()
+                
+    # --- ADD THIS NEW METHOD ---
+    def start_background_process(self, command: str, working_directory: str, launch_in_new_window: bool = False) -> str:
+        """A direct pass-through to the process manager tool for the controller."""
+        return start_background_process(command, working_directory, launch_in_new_window)
+    
+    def execute_task(self, task_prompt: str, workspace_path: str):
+        # We use asyncio.run to call our async method from the synchronous controller thread
+        return asyncio.run(self.aexecute_task(task_prompt, workspace_path))
+
+    async def aexecute_task(self, task_prompt: str, workspace_path: str):
+        try:
+            print(f"\n[Agent Task]: {task_prompt}")
+            specialist_tools = self._route_query(task_prompt)
+            # Project tasks don't need memory or web browsing unless specified
+            foundational_tools = self.file_management_tools + self.system_tools
+            final_tools = list({tool.metadata.name: tool for tool in (specialist_tools + foundational_tools)}.values())
+
+            task_system_prompt = f"You are a subordinate AI assistant. Your only job is to execute the given task precisely as instructed. You are operating within the workspace: '{workspace_path}'. All file operations MUST use relative paths from this workspace. Your current task is: \"{task_prompt}\""
+            
+            # --- API FIX ---
+            # Create the agent using the documented .from_tools() method
+            agent = ReActAgent(
+                tools=final_tools,
+                llm=Settings.llm,
+                system_prompt=task_system_prompt,
+                verbose=True
+            )
+
+            # --- API FIX ---
+            # Execute the agent using the modern await .achat() method
+            response = await agent.run(task_prompt)
+            return str(response)
+
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            return f"ERROR during task execution: {e}"
         
     def reset_memory(self):
         self.memory.reset()

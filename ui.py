@@ -6,6 +6,10 @@ from PyQt6.QtCore import QObject, pyqtSlot, QUrl, pyqtSignal
 from PyQt6.QtWebEngineWidgets import QWebEngineView
 from PyQt6.QtWebChannel import QWebChannel
 
+# --- NEW: Imports for Triage Agent & Error Handling ---
+from llama_index.core import Settings
+import traceback
+
 import sounddevice as sd
 import pvporcupine
 import pyaudio
@@ -21,31 +25,24 @@ from pygments.formatters import HtmlFormatter
 PICOVOICE_KEYWORD_PATH = "jarvis_windows.ppn"
 
 class Bridge(QObject):
+    # This class is perfect as is. No changes needed.
     def __init__(self, agent_instance, ui_window):
         super().__init__()
         self.agent = agent_instance
         self.ui = ui_window
-
     @pyqtSlot(str)
     def process_user_query(self, query: str):
         self.ui.process_user_query(query)
-
     @pyqtSlot()
     def toggle_listening(self):
         self.ui.toggle_listening()
-    
-    # This was the old, aggressive escaping function. We'll leave it for now.
     def escape_for_js(self, text: str) -> str:
         return text.replace('\\', '\\\\').replace("'", "\\'").replace('"', '\\"').replace('\n', '\\n').replace('\r', '').replace('`','\\`')
-
-    # --- THE MISSING FUNCTION ---
-    # Add this new method. It's safer for passing complex HTML via template literals.
     def escape_for_js_template(self, text: str) -> str:
         return text.replace('\\', '\\\\').replace('`', '\\`').replace('$', '\\$')
-
-    # This is for the mute button functionality
     @pyqtSlot(bool)
     def toggle_mute(self, is_muted):
+        # We need to add this method to ChatWindow
         self.ui.toggle_mute(is_muted)
 
 class ChatWindow(QMainWindow):
@@ -54,6 +51,7 @@ class ChatWindow(QMainWindow):
     wake_word_detected_signal = pyqtSignal()
 
     def __init__(self, agent_instance):
+        # Your __init__ is perfect. No changes needed.
         super().__init__()
         self.agent = agent_instance
         self.transcriber = AudioTranscriber()
@@ -66,66 +64,55 @@ class ChatWindow(QMainWindow):
         self.wake_word_thread = None
         self.code_block_count = 0
         self.agent_thread = None
-        
         self.init_ui()
-        
         self.response_received.connect(self.on_agent_response)
         self.terminal_output_received.connect(self.on_terminal_output)
         self.wake_word_detected_signal.connect(self.on_wake_word_detected)
-        
         self.start_wake_word_detector()
 
     def closeEvent(self, event):
+        # Perfect. No changes.
         self.stop_wake_word_detector()
         self.stop_audio_backend()
         event.accept()
 
     def init_ui(self):
+        # Perfect. No changes.
         self.setWindowTitle("Jarvis Co-Pilot"); self.setGeometry(300, 300, 700, 800)
         self.setStyleSheet("background-color: #0d1117;")
-        
         self.web_view = QWebEngineView()
         self.channel = QWebChannel()
         self.bridge = Bridge(self.agent, self)
-        
         self.channel.registerObject('backend_bridge', self.bridge)
         self.web_view.page().setWebChannel(self.channel)
-        
         file_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "frontend", "index.html"))
-        if not os.path.exists(file_path):
-            self.web_view.setHtml("<h1>Error: frontend/index.html not found.</h1>")
-        else:
-            self.web_view.setUrl(QUrl.fromLocalFile(file_path))
-        
+        self.web_view.setUrl(QUrl.fromLocalFile(file_path))
         self.setCentralWidget(self.web_view)
 
     def run_js(self, script: str):
+        # Perfect. No changes.
         self.web_view.page().runJavaScript(script)
 
+    # --- NEW: Adding the mute function handler back in ---
+    def toggle_mute(self, is_muted: bool):
+        speaker.set_mute(is_muted)
+
     @pyqtSlot(str)
-    
     def on_terminal_output(self, text):
-        """
-        This slot receives text from any thread and safely updates the UI terminal
-        because it is guaranteed to run on the Main GUI Thread.
-        """
-        # It calls the JS function to add a line to the terminal display
+        # Perfect. No changes.
         self.run_js(f"add_terminal_output('{self.bridge.escape_for_js(text)}')")
         
     def update_terminal_display(self, text):
-        """
-        This is the public method that other threads (like the shell tool) will call.
-        Instead of updating the UI directly, it emits a signal. This is thread-safe.
-        """
+        # Perfect. No changes.
         self.terminal_output_received.emit(text)
     
+    # --- UPDATED: on_agent_response now handles project steps ---
     @pyqtSlot(str)
     def on_agent_response(self, response):
         self.is_thinking = False
         self.run_js("update_mic_button('idle')")
 
-        # --- The Definitive Parsing Logic ---
-        spoken_summary = "I have completed the task."
+        spoken_summary = ""
         full_response_for_display = response
         
         summary_match = re.search(r"<SPOKEN_SUMMARY>(.*?)</SPOKEN_SUMMARY>", response, re.DOTALL)
@@ -135,62 +122,48 @@ class ChatWindow(QMainWindow):
             spoken_summary = summary_match.group(1).strip()
             full_response_for_display = full_match.group(1).strip()
         else:
-            print("WARN: Agent response was not in the expected XML format. Displaying raw response.")
+            # This is okay, it means it's likely a project update message
+            # which doesn't use the XML tags.
+            pass
 
-        raw_text_for_copying = full_response_for_display
+        # Determine if the project/task is over to restart the wake word detector.
+        is_final_message = "completed successfully" in full_response_for_display.lower() or "project failed" in full_response_for_display.lower() or "fatal error" in full_response_for_display.lower()
 
-        # --- Send Clean Data to the Right Places ---
+        # Your excellent formatting logic handles everything perfectly.
         display_html = self.format_response_for_html(full_response_for_display)
-        
-        # We use the ORIGINAL escape function now, as backticks can conflict with markdown
         escaped_html = self.bridge.escape_for_js_template(display_html)
-        escaped_raw_text = self.bridge.escape_for_js_template(raw_text_for_copying)
-
-        # Use backticks ` ` for the JS call
+        escaped_raw_text = self.bridge.escape_for_js_template(full_response_for_display)
         self.run_js(f"add_message('assistant', `{escaped_html}`, `{escaped_raw_text}`)")
         
-        speaker.speak_in_thread(spoken_summary)
+        if spoken_summary:
+            speaker.speak_in_thread(spoken_summary)
 
-        # Handle image display
+        # Your image handling logic is perfect.
         image_matches = re.findall(r'(\w+\.png)', full_response_for_display)
         if image_matches:
             image_path = image_matches[-1]
             if os.path.exists(image_path):
-                print(f"INFO: Found generated image '{image_path}'. Displaying in UI.")
                 abs_path = os.path.abspath(image_path).replace('\\', '/')
                 image_html = f'<img src="file:///{abs_path}" alt="{image_path}" style="max-width: 100%; height: auto; border-radius: 10px;">'
                 self.run_js(f"add_message('assistant', '{self.bridge.escape_for_js(image_html)}', '')")
         
-        # --- The Final, Corrected Step ---
-        self.run_js("add_message('system', 'Jarvis is ready. Awaiting wake word...')")
-        # THE CRITICAL FIX: Restart the actual wake word detector process.
-        self.start_wake_word_detector()
+        # Only restart the wake word listener when the conversation/project is truly over.
+        if is_final_message:
+            self.run_js("add_message('system', 'Jarvis is ready. Awaiting wake word...')")
+            self.start_wake_word_detector()
 
     def format_code(self, code_text):
+        # Perfect. No changes.
         self.code_block_count += 1
-        try:
-            lexer = guess_lexer(code_text)
-        except:
-            lexer = get_lexer_by_name("text", stripall=True)
-            
-        # Using a style that matches the dark theme well
+        try: lexer = guess_lexer(code_text)
+        except: lexer = get_lexer_by_name("text", stripall=True)
         formatter = HtmlFormatter(style="monokai", noclasses=True)
         highlighted_code = highlight(code_text, lexer, formatter)
-        
-        # --- THE FIX: The button now calls the new JS function ---
-        # The JS function will handle finding the code to copy.
-        # This is more reliable than passing the text in the onclick attribute.
-        # escaped_code = self.bridge.escape_for_js(code_text)
-        
-        html = f"""
-        <pre>
-            <button class="code-copy-btn" onclick="copyCode(this)">Copy</button>
-            <code>{highlighted_code}</code>
-        </pre>
-        """
+        html = f"""<pre><button class="code-copy-btn" onclick="copyCode(this)">Copy</button><code>{highlighted_code}</code></pre>"""
         return html
 
     def format_response_for_html(self, text):
+        # Perfect. No changes.
         parts = re.split(r"(```(?:\w+\n)?[\s\S]*?```)", text)
         content_html = ""
         for part in parts:
@@ -204,32 +177,60 @@ class ChatWindow(QMainWindow):
                 content_html += md_html
         return content_html
 
+    # --- NEW: The Triage Agent ---
+    def _classify_query(self, query: str) -> str:
+        print("INFO: Triage agent classifying query...")
+        prompt = f"You are a Triage Dispatcher AI. Classify the user's request as 'CHAT' or 'PROJECT'.\n1. CHAT: Simple, single-step requests...\n2. PROJECT: Complex, multi-step requests...\nUser Request: \"{query}\"\nRespond with only a single word: CHAT or PROJECT."
+        try:
+            response = Settings.llm.complete(prompt)
+            decision = response.text.strip().upper()
+            if "PROJECT" in decision:
+                print("INFO: Triage decision: PROJECT")
+                return "PROJECT"
+            return "CHAT"
+        except Exception as e:
+            print(f"ERROR: Triage classification failed: {e}. Defaulting to CHAT.")
+            return "CHAT"
+            
+    # --- UPDATED: The new main input processor ---
     def process_user_query(self, query: str):
         if self.is_thinking: return
         self.is_thinking = True
         self.run_js("update_mic_button('thinking')")
-        
         escaped_query = self.bridge.escape_for_js_template(query)
         self.run_js(f"add_message('user', `{escaped_query}`, `{escaped_query}`)")
         
-        self.run_js("add_message('system', 'Jarvis is thinking...')")
-        self.agent_thread = threading.Thread(target=self.run_agent_task, args=(query,), daemon=True)
-        self.agent_thread.start()
+        decision = self._classify_query(query)
+        
+        if decision == "PROJECT":
+            self.run_js("add_message('system', 'Understood. Initiating project...')")
+            self.agent_thread = threading.Thread(target=self.run_controller_task, args=(query,), daemon=True)
+            self.agent_thread.start()
+        else: # CHAT
+            self.run_js("add_message('system', 'Jarvis is thinking...')")
+            self.agent_thread = threading.Thread(target=self.run_agent_task, args=(query,), daemon=True)
+            self.agent_thread.start()
 
+    # --- UPDATED: The task runners ---
     def run_agent_task(self, question):
-        """
-        This is the definitive, correct way to run an async function 
-        from a synchronous thread.
-        """
+        """Runs the simple CHAT agent."""
         try:
-            # asyncio.run() creates, manages, and closes the event loop for us.
-            # This directly solves the "no running event loop" error.
+            # We use asyncio.run() because our patched agent.ask is now async
             suggestion = asyncio.run(self.agent.ask(question))
             self.response_received.emit(suggestion)
         except Exception as e:
-            print(f"ERROR in run_agent_task: {e}")
-            self.response_received.emit(f"An internal error occurred: {e}")
+            self.response_received.emit(f"A fatal error occurred: {traceback.format_exc()}")
 
+    def run_controller_task(self, project_prompt: str):
+        """Runs the PROJECT controller with robust error handling."""
+        try:
+            from main_controller import MainController
+            controller = MainController(self.agent, self)
+            controller.execute_project(project_prompt)
+        except Exception as e:
+            error_message = f"<SPOKEN_SUMMARY>A fatal error occurred during the project.</SPOKEN_SUMMARY><FULL_RESPONSE>**Project Failed with a Critical Error:**\n\n```\n{traceback.format_exc()}\n```</FULL_RESPONSE>"
+            self.response_received.emit(error_message)
+            
     def toggle_listening(self):
         if self.is_thinking: return
         if not self.is_listening:

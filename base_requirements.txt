@@ -1,0 +1,7 @@
+# base_requirements.txt
+numpy
+pandas
+scikit-learn
+matplotlib
+seaborn
+# Add any other packages you find Jarvis frequently installs
