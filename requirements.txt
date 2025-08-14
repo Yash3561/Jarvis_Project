@@ -34,4 +34,5 @@ pytz
 pyautogui
 pyperclip
 
+inputimeout
 

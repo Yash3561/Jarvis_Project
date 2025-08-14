@@ -98,41 +98,23 @@ def click(selector: str) -> str:
 
 # Add this new function to the end of tools/browser_automation.py
 
-def extract_text_from_element(url: str, selector: str) -> str:
+def extract_text_from_element(selector: str) -> str:
     """
-    Navigates to a URL and extracts the text content from a single element
-    identified by a CSS selector. This is a precision tool for targeted data scraping.
+    Extracts the text content from a single element on the CURRENT page
+    identified by a CSS selector. The browser MUST be navigated to a page first.
     """
-    if not browser_controller.driver:
-        # Use a temporary headless driver for this one-shot operation
-        print(f"INFO: One-shot extraction from {url} using selector '{selector}'")
-        temp_driver = None
-        try:
-            options = webdriver.ChromeOptions()
-            options.add_argument("--headless")
-            # ... other options
-            service = Service(ChromeDriverManager().install())
-            temp_driver = webdriver.Chrome(service=service, options=options)
-            temp_driver.get(url)
-            wait = WebDriverWait(temp_driver, 10)
-            element = wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, selector)))
-            text = element.text
-            return f"Extracted text: '{text}'"
-        except Exception as e:
-            return f"Error extracting text: {e}"
-        finally:
-            if temp_driver:
-                temp_driver.quit()
-    else:
-        # Use the existing, open browser if available
-        print(f"INFO: Extracting text from current page using selector '{selector}'")
-        try:
-            wait = WebDriverWait(browser_controller.driver, 10)
-            element = wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, selector)))
-            text = element.text
-            return f"Extracted text: '{text}'"
-        except Exception as e:
-            return f"Error extracting text: {e}"
+    if not browser_controller.driver or not browser_controller.driver.current_url:
+        return "Error: Browser is not on a page. Please use the `navigate` tool first."
+    
+    print(f"INFO: Extracting text from current page using selector '{selector}'")
+    try:
+        wait = WebDriverWait(browser_controller.driver, 10)
+        element = wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, selector)))
+        text = element.text
+        return f"Extracted text: '{text}'"
+    except Exception as e:
+        # Give a more helpful error message!
+        return f"ERROR: Could not find or extract text from element with selector '{selector}'. The element may not exist or the page may not have loaded correctly. Double-check the CSS selector. Error details: {e}"
         
 def open_url_in_browser(url: str) -> str:
     """Opens the specified URL in the user's default web browser."""

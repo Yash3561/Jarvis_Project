@@ -15,14 +15,16 @@ from tools.web_search import search_the_web
 from tools.code_writer import generate_code, review_and_refine_code
 from tools.system_commands import run_shell_command, get_current_datetime, get_time_for_location, get_timestamp
 from tools.browser_tool import browse_and_summarize_website
-from tools.browser_automation import navigate, type_text, click, extract_text_from_element, open_url_in_browser
+from tools.browser_automation import browser_controller, navigate, type_text, click, extract_text_from_element, open_url_in_browser
 from tools.persistent_terminal import run_in_terminal
 from tools.long_term_memory import save_experience, recall_experiences
 from tools.script_runner import run_python_script
+from tools.interaction_tools import wait_for_user_input
 from tools.process_manager import start_background_process, check_process_status, stop_background_process
 
 # ADD the new, consolidated tool imports
 from tools.workspace_tools import create_terminal, run_command
+from tools.interaction_tools import wait_for_user_input
 
 class AIAgent:
     def __init__(self, data_directory="./data"):
@@ -75,6 +77,10 @@ class AIAgent:
             FunctionTool.from_defaults(fn=start_background_process),
             FunctionTool.from_defaults(fn=check_process_status),
             FunctionTool.from_defaults(fn=stop_background_process),
+        ]
+        
+        self.interaction_tools = [
+            FunctionTool.from_defaults(fn=wait_for_user_input, name="wait_for_user_input"),
         ]
         
         # This is the short-term conversation memory
@@ -142,6 +148,15 @@ class AIAgent:
             print(f"WARN: Router returned ambiguous category '{raw_choice}'. Defaulting to general tools.")
             return self.file_management_tools + self.system_tools + self.web_tools
         
+    def navigate(self, url: str) -> str:
+        """Direct pass-through to the browser automation tool."""
+        return navigate(url)
+
+    def extract_text_from_element(self, selector: str) -> str:
+        """Direct pass-through to the improved browser automation tool."""
+        return extract_text_from_element(selector)
+    
+    
     def open_url_in_browser(self, url: str) -> str:
         """A direct pass-through to the browser tool for the controller."""
         return open_url_in_browser(url)
@@ -157,6 +172,15 @@ class AIAgent:
     def run_command(self, command: str, terminal_name: str = "default") -> str:
         """Direct pass-through to the workspace tool for the controller."""
         return run_command(command, terminal_name)
+    
+    def wait_for_user_input(self, prompt: str = "Execution paused. Press Enter to continue.") -> str:
+        """Direct pass-through to the user interaction tool."""
+        return wait_for_user_input(prompt=prompt)
+
+    def analyze_entire_screen(self, question_about_screen: str) -> str:
+        """Direct pass-through to the screen reader/vision tool."""
+        # Assuming your tool function is named analyse_screen_with_gemini
+        return analyse_screen_with_gemini(question_about_screen)
     
     def _summarize_and_save_turn(self, query, response):
         """

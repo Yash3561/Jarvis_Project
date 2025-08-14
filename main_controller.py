@@ -1,5 +1,3 @@
-# main_controller.py (The Battle-Hardened Version)
-
 import os
 import platform
 import re
@@ -10,8 +8,6 @@ from llama_index.core import Settings
 from tools.workspace import initialize_workspace, close_workspace
 
 class MainController:
-    # ... (keep your __init__, _update_status, and _parse_tool_call methods exactly as they were from the last fix) ...
-    # PASTE THE ROBUST PARSER FROM THE PREVIOUS STEP HERE IF YOU HAVEN'T ALREADY
     def __init__(self, agent: AIAgent, ui_handler=None):
         self.agent = agent
         self.ui = ui_handler
@@ -94,21 +90,35 @@ class MainController:
         self._update_status(f"🚀 **Workspace Initialized:** `{workspace_path}`")
 
         try:
+            # --- UPDATED THE PROMPT TO INCLUDE THE NEW TOOLS ---
             planner_prompt = f"""
-You are "Jarvis," a world-class autonomous software engineer. Generate a complete, step-by-step plan to fulfill the user's request. You MUST follow these directives:
-1.  **VENV IS MANDATORY** for any Python project. First, create it with `run_command(command="python -m venv venv")`.
-2.  **USE THE VENV's EXECUTABLES** for all subsequent `python` and `pip` commands (e.g., `.\\venv\\Scripts\\python.exe ...` on Windows or `./venv/bin/python ...` on Linux/macOS).
-3.  **DO NOT USE `cd`**. The terminal is already in the correct directory.
-4.  **VERIFY YOUR WORK** with commands like `ls -R` or `pip freeze`.
-5.  **For long-running apps (servers, GUIs), you must first create a named terminal, then run the start command in it.**
+You are "Jarvis," a world-class autonomous software engineer. Your task is to generate a complete, step-by-step plan.
+
+## CRITICAL DIRECTIVES ##
+1.  **THE PLAN MUST BE STATIC:** You cannot use loops (like 'for i in range...'), variables, or f-strings in your plan. If you need to perform an action five times, you must write out the tool call five separate times with the numbers 1, 2, 3, 4, 5 hardcoded.
+2.  **USE THE RIGHT TOOL:** For web scraping, **always** prefer using the `navigate` and `extract_text_from_element` tools. Do not write a custom Python script with `requests`.
+3.  **VENV IS MANDATORY:** For any project that DOES require custom Python scripts, you must create and use a venv.
+4.  **VERIFY WORK:** Use commands like `dir` or `ls -R` to check your work.
+5.  **GUI/SERVER APPS:** For long-running apps, use `wait_for_user_input()` as the final step.
+
+## EXAMPLE OF A CORRECT, STATIC PLAN ##
+# To get the top 3 items from a list on a webpage:
+navigate(url="https://example.com")
+extract_text_from_element(selector="li:nth-child(1)")
+extract_text_from_element(selector="li:nth-child(2)")
+extract_text_from_element(selector="li:nth-child(3)")
+
 ## AVAILABLE TOOLS ##
 `run_command(command="your-shell-command-here")`
-`write_to_file(file_path="relative/path/to/file.py", content='Your file content here...')`
-`create_terminal(name="my_app_server")`
-`run_command(command="start cmd /k ...", terminal_name="my_app_server")`
+`write_to_file(file_path="file.py", content='...')`
+`navigate(url="https://example.com")`
+`extract_text_from_element(selector="css.selector.here")`
+`wait_for_user_input(prompt="...")`
+
 ## User Request ##
 "{user_prompt}"
-Generate the plan now. Do not use markdown code blocks.
+
+Generate the complete, static, step-by-step plan now.
 """
             self._update_status("🧠 **Generating project plan...**")
             plan = Settings.llm.complete(planner_prompt).text
@@ -125,12 +135,12 @@ Generate the plan now. Do not use markdown code blocks.
 
     def _extract_tool_calls(self, plan: str) -> list[str]:
         """
-        NEW AND IMPROVED: Extracts tool calls from a plan string using
-        parenthesis-counting to correctly handle nested structures.
+        Extracts tool calls from a plan string using parenthesis-counting.
+        This regex MUST include ALL available tools.
         """
         tool_calls = []
-        # Regex to find the start of a potential tool call
-        tool_pattern = r"(run_command|write_to_file|create_terminal)\("
+        # --- THIS IS THE CORRECTED REGEX ---
+        tool_pattern = r"(run_command|write_to_file|create_terminal|wait_for_user_input|navigate|extract_text_from_element|analyze_entire_screen)\("
         
         cursor = 0
         while cursor < len(plan):
@@ -155,7 +165,6 @@ Generate the plan now. Do not use markdown code blocks.
                 tool_calls.append(plan[start_index:end_index])
                 cursor = end_index
             else:
-                # Mismatched parens, skip this potential call and log an error
                 self._update_status(f"⚠️ Warning: Could not find matching parenthesis for call starting at index {start_index}.")
                 cursor = open_paren_index + 1
 
@@ -163,8 +172,9 @@ Generate the plan now. Do not use markdown code blocks.
 
     def _execute_plan(self, plan: str):
         """
-        MODIFIED: This now uses the robust _extract_tool_calls method
-        instead of a brittle regex to find steps.
+        FULLY-AGENTIC EXECUTION LOOP WITH SELF-CORRECTION (V4).
+        This version has a more robust correction parser and a more directive
+        prompt to guide the agent towards better tool usage (e.g., Selenium over requests).
         """
         self._update_status("⚙️ **Parsing execution plan...**")
         matches = self._extract_tool_calls(plan)
@@ -174,31 +184,105 @@ Generate the plan now. Do not use markdown code blocks.
             raise ValueError("No executable steps found in the generated plan.")
 
         step_counter = 1
-        for task_string in matches:
-            self._update_status(f"▶️ **Executing Step {step_counter}:** {task_string.split('(')[0]}")
+        # Use a while loop because the 'matches' list can now be modified during execution
+        while step_counter <= len(matches):
+            task_string = matches[step_counter - 1]
+            self._update_status(f"▶️ **Executing Step {step_counter}/{len(matches)}:** {task_string.split('(')[0]}")
 
-            parsed_tool = self._parse_tool_call(task_string)
-            if parsed_tool.get('error'):
-                raise ValueError(f"Tool call parsing failed: {parsed_tool['error']}")
+            max_retries = 3
+            for attempt in range(max_retries):
+                parsed_tool = self._parse_tool_call(task_string)
+                if parsed_tool.get('error'):
+                    self._update_status(f"❌ **CRITICAL PARSING ERROR on Step {step_counter}:** {parsed_tool['error']}")
+                    raise ValueError(f"Tool call parsing failed: {parsed_tool['error']}")
 
-            tool_name = parsed_tool['name']
-            tool_args = parsed_tool['args']
+                tool_name = parsed_tool['name']
+                tool_args = parsed_tool['args']
+
+                try:
+                    if tool_name == "write_to_file":
+                        raw_result = self.agent.write_file(**tool_args)
+                    elif tool_name == "run_command":
+                        raw_result = self.agent.run_command(**tool_args)
+                    elif tool_name == "create_terminal":
+                        raw_result = self.agent.create_terminal(**tool_args)
+                    elif tool_name == "wait_for_user_input":
+                        raw_result = self.agent.wait_for_user_input(**tool_args)
+                    elif tool_name == "navigate":
+                        raw_result = self.agent.navigate(**tool_args)
+                    elif tool_name == "extract_text_from_element":
+                        raw_result = self.agent.extract_text_from_element(**tool_args)
+                    elif tool_name == "analyze_entire_screen":
+                        raw_result = self.agent.analyze_entire_screen(**tool_args)
+                    else:
+                        raise ValueError(f"Unknown tool '{tool_name}' requested.")
+                    
+                    if raw_result and ("ERROR" in str(raw_result).upper() or "TRACEBACK" in str(raw_result).upper()):
+                        raise Exception(raw_result)
+                    
+                    self._update_status(f"✔️ **Step {step_counter} Succeeded!**")
+                    break
+
+                except Exception as e:
+                    error_output = str(e)
+                    self._update_status(f"⚠️ **EXECUTION FAILED on Step {step_counter}, Attempt {attempt + 1}/{max_retries}.**")
+
+                    if attempt + 1 >= max_retries:
+                        self._update_status(f"❌ **CRITICAL FAILURE:** Max retries reached for this step. Aborting project.")
+                        raise
+
+                    self._update_status("🧠 **Agent is attempting to self-correct...**")
+                    
+                    correction_prompt = f"""
+You are a debugging AI assistant. Your previous step failed. You are stuck in a loop. You must try a different strategy.
+
+## Original Failed Task ##
+`{task_string}`
+
+## Full Error Output ##
+```
+{error_output}
+```
+
+## ANALYSIS & THE NUCLEAR OPTION ##
+Your plan is failing repeatedly because your CSS selector is wrong. Guessing a new selector is not working.
+
+**YOUR NEW STRATEGY IS THE NUCLEAR OPTION:**
+You must use your `analyze_entire_screen` tool to LOOK at the webpage and figure out the correct CSS selectors. This tool will describe the visual layout of the screen, allowing you to build a correct plan.
+
+## AVAILABLE VISION TOOL ##
+`analyze_entire_screen(question_about_screen="...")`
+
+## YOUR NEW PLAN ##
+Your new plan MUST consist of a SINGLE step: a call to `analyze_entire_screen`. Your question should be something like: "What are the correct CSS selectors for the names of the top 5 trending repositories on this page?"
+
+## REQUIRED OUTPUT FORMAT ##
+Place the single `analyze_entire_screen` tool call inside `<CORRECTED_PLAN>` tags.
+
+<CORRECTED_PLAN>
+</CORRECTED_PLAN>
+"""
+                    
+                    correction_response = Settings.llm.complete(correction_prompt).text
+                    
+                    new_steps = []
+                    plan_match = re.search(r"<CORRECTED_PLAN>(.*?)</CORRECTED_PLAN>", correction_response, re.DOTALL)
+                    
+                    if plan_match:
+                        plan_text = plan_match.group(1).strip()
+                        new_steps = [step.strip() for step in plan_text.split('\n') if step.strip()]
+
+                    if not new_steps:
+                        self._update_status(f"❌ **CORRECTION FAILED:** Agent did not provide a valid corrective plan. Retrying...")
+                        continue
+
+                    self._update_status(f"💡 **Agent's New Multi-Step Corrective Plan:**")
+                    for step in new_steps:
+                        self._update_status(f"  - {step}")
+
+                    matches[step_counter - 1 : step_counter] = new_steps
+                    # The plan has changed, so we need to break the retry loop and let the main loop continue
+                    # from the newly inserted steps.
+                    break 
             
-            try:
-                if tool_name == "write_to_file":
-                    raw_result = self.agent.write_file(**tool_args)
-                elif tool_name == "run_command":
-                    raw_result = self.agent.run_command(**tool_args)
-                elif tool_name == "create_terminal":
-                    raw_result = self.agent.create_terminal(**tool_args)
-                else:
-                    raise ValueError(f"Unknown tool '{tool_name}' requested.")
-                
-                if raw_result and "ERROR" in str(raw_result).upper():
-                    raise Exception(raw_result)
-                
-                self._update_status(f"✔️ **Step {step_counter} Succeeded!**")
-                step_counter += 1
-            except Exception as e:
-                self._update_status(f"❌ **EXECUTION FAILED on Step {step_counter}. Reason: {e}")
-                raise
+            step_counter += 1
