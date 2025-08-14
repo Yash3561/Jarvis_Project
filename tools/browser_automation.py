@@ -1,4 +1,4 @@
-# tools/browser_automation.py
+# tools/browser_automation.py (The new "Smart Hands" V5)
 
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
@@ -7,24 +7,20 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from webdriver_manager.chrome import ChromeDriverManager
 import time
-import webbrowser
 
 class BrowserController:
     def __init__(self):
         self.driver = None
+        self.current_page_elements = []
 
     def start_browser(self):
         if not self.driver:
             print("INFO: Starting new browser instance...")
             try:
                 options = webdriver.ChromeOptions()
-                # options.add_argument("--headless") # You can uncomment this to run without a visible window
-                options.add_argument("--no-sandbox")
-                options.add_argument("--disable-dev-shm-usage")
-                # --- ADD THESE LINES TO REDUCE LOGGING NOISE ---
-                options.add_argument('--log-level=3') # Suppresses most informational logs
+                # options.add_argument("--headless")
+                options.add_argument('--log-level=3')
                 options.add_experimental_option('excludeSwitches', ['enable-logging'])
-                # -------------------------------------------------
                 service = Service(ChromeDriverManager().install())
                 self.driver = webdriver.Chrome(service=service, options=options)
                 print("INFO: Browser started successfully.")
@@ -37,89 +33,90 @@ class BrowserController:
             print("INFO: Closing browser instance.")
             self.driver.quit()
             self.driver = None
+            self.current_page_elements = []
 
-    def navigate_to_url(self, url: str) -> str:
-        """Navigates the browser to the specified URL."""
-        if not self.driver:
-            self.start_browser()
-        
-        try:
-            print(f"INFO: Navigating to {url}")
-            self.driver.get(url)
-            return f"Successfully navigated to {url}."
-        except Exception as e:
-            return f"Error navigating to {url}: {e}"
+    def _scan_page_for_elements(self):
+        if not self.driver: return
+        print("INFO: Scanning page for interactable elements...")
+        self.current_page_elements = []
+        elements = self.driver.find_elements(By.CSS_SELECTOR, "a, button, input[type='text'], input[type='submit'], textarea, [role='button'], [role='link']")
+        for i, element in enumerate(elements):
+            try:
+                text = element.text.strip()
+                aria_label = element.get_attribute("aria-label") or ""
+                # Prioritize visible text, fall back to aria-label
+                visible_text = text if text else aria_label
+                if not visible_text: continue # Skip elements with no discernible text
 
-    def type_into_element(self, selector: str, text: str) -> str:
-        """Finds an element by CSS selector and types text into it."""
-        if not self.driver:
-            return "Error: Browser not started."
-        try:
-            print(f"INFO: Typing '{text}' into element '{selector}'")
-            wait = WebDriverWait(self.driver, 10)
-            element = wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, selector)))
-            element.send_keys(text)
-            return f"Successfully typed '{text}' into element '{selector}'."
-        except Exception as e:
-            return f"Error typing into element '{selector}': {e}"
+                uid = f"element_{i}"
+                # Inject a unique ID directly into the DOM for later access
+                self.driver.execute_script(f"arguments[0].setAttribute('data-jarvis-id', '{uid}');", element)
+                self.current_page_elements.append({ "uid": uid, "text": visible_text[:150] })
+            except Exception:
+                continue
 
-    def click_element(self, selector: str) -> str:
-        """Finds an element by CSS selector and clicks it."""
-        if not self.driver:
-            return "Error: Browser not started."
-        try:
-            print(f"INFO: Clicking element '{selector}'")
-            wait = WebDriverWait(self.driver, 10)
-            element = wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, selector)))
-            element.click()
-            time.sleep(2) # Wait for page to potentially react/load
-            return f"Successfully clicked element '{selector}'."
-        except Exception as e:
-            return f"Error clicking element '{selector}': {e}"
+# --- V5 Tool Functions: The New High-Level API for the Agent ---
 
-# --- Global instance of our browser controller ---
-# This ensures that all tools share the same browser session.
 browser_controller = BrowserController()
 
-# --- Tool functions that the agent will call ---
-# These are simple wrappers around our controller's methods.
-
-def navigate(url: str) -> str:
-    """Navigates the browser to a URL."""
-    return browser_controller.navigate_to_url(url)
-
-def type_text(selector: str, text: str) -> str:
-    """Types text into an element identified by a CSS selector."""
-    return browser_controller.type_into_element(selector, text)
-
-def click(selector: str) -> str:
-    """Clicks an element identified by a CSS selector."""
-    return browser_controller.click_element(selector)
-
-# Add this new function to the end of tools/browser_automation.py
-
-def extract_text_from_element(selector: str) -> str:
+def navigate_and_scan(url: str) -> str:
     """
-    Extracts the text content from a single element on the CURRENT page
-    identified by a CSS selector. The browser MUST be navigated to a page first.
+    Navigates to a URL and scans the page for interactable elements, returning a summary.
+    This should be the first step for any web task.
     """
-    if not browser_controller.driver or not browser_controller.driver.current_url:
-        return "Error: Browser is not on a page. Please use the `navigate` tool first."
-    
-    print(f"INFO: Extracting text from current page using selector '{selector}'")
+    if not browser_controller.driver: browser_controller.start_browser()
     try:
-        wait = WebDriverWait(browser_controller.driver, 10)
-        element = wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, selector)))
-        text = element.text
-        return f"Extracted text: '{text}'"
+        browser_controller.driver.get(url)
+        time.sleep(2) # Wait for JS to load
+        browser_controller._scan_page_for_elements()
+        summary = f"Navigated to {url}. Found {len(browser_controller.current_page_elements)} interactable elements. Use `list_current_elements()` to see them."
+        return summary
     except Exception as e:
-        # Give a more helpful error message!
-        return f"ERROR: Could not find or extract text from element with selector '{selector}'. The element may not exist or the page may not have loaded correctly. Double-check the CSS selector. Error details: {e}"
-        
-def open_url_in_browser(url: str) -> str:
-    """Opens the specified URL in the user's default web browser."""
+        return f"ERROR: Failed to navigate to {url}. Reason: {e}"
+
+def list_current_elements() -> str:
+    """
+    Lists all interactable elements found on the current page.
+    """
+    if not browser_controller.current_page_elements:
+        return "No elements found. Use `navigate_and_scan(url=...)` first."
+    return "Found elements:\n" + "\n".join([str(e) for e in browser_controller.current_page_elements])
+
+def click_element(uid: str) -> str:
+    """
+    Clicks an element identified by its unique ID (uid).
+    Always run `list_current_elements` first to get the correct uid.
+    """
+    if not browser_controller.driver: return "ERROR: Browser not started."
     try:
-        webbrowser.open(url, new=2) # new=2 opens in a new tab
-        return f"Successfully opened {url} in the browser."
+        element = browser_controller.driver.find_element(By.CSS_SELECTOR, f"[data-jarvis-id='{uid}']")
+        element.click()
+        time.sleep(2) # Wait for page to react
+        browser_controller._scan_page_for_elements() # Re-scan after click
+        return f"Clicked element {uid}. Page re-scanned. Found {len(browser_controller.current_page_elements)} new elements."
     except Exception as e:
-        return f"Error opening URL: {e}"
+        return f"ERROR: Could not click element {uid}. Is it still on the page? Reason: {e}"
+
+def type_into_element(uid: str, text: str) -> str:
+    """
+    Types text into an input element identified by its unique ID (uid).
+    Always run `list_current_elements` first to get the correct uid.
+    """
+    if not browser_controller.driver: return "ERROR: Browser not started."
+    try:
+        element = browser_controller.driver.find_element(By.CSS_SELECTOR, f"[data-jarvis-id='{uid}']")
+        element.clear()
+        element.send_keys(text)
+        return f"Typed '{text}' into element {uid}."
+    except Exception as e:
+        return f"ERROR: Could not type into element {uid}. Is it an input field? Reason: {e}"
+
+def get_page_content() -> str:
+    """
+    Returns the full text content of the current webpage.
+    """
+    if not browser_controller.driver: return "ERROR: Browser not started."
+    try:
+        return browser_controller.driver.find_element(By.TAG_NAME, 'body').text
+    except Exception as e:
+        return f"ERROR: Could not get page content. Reason: {e}"
