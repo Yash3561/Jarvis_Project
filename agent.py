@@ -58,7 +58,7 @@ class AIAgent:
             FunctionTool.from_defaults(fn=list_files_in_directory, name="list_files"),
             FunctionTool.from_defaults(fn=read_file_content, name="read_file"),
             FunctionTool.from_defaults(fn=write_to_file, name="write_file"),
-            # FunctionTool.from_defaults(fn=create_directory, name="create_directory"),
+            # FunctionTool.from_defaults(fn=create_directory, name="create_directory"), # Re-enable if needed for agent
         ]
 
         self.memory_tools = [
@@ -82,6 +82,9 @@ class AIAgent:
         self.interaction_tools = [
             FunctionTool.from_defaults(fn=wait_for_user_input, name="wait_for_user_input"),
         ]
+
+        # Placeholder for desktop tools if they are to be added later
+        self.desktop_tools = []
         
         # This is the short-term conversation memory
         self.memory = ChatMemoryBuffer.from_defaults(token_limit=8000)
@@ -107,9 +110,10 @@ class AIAgent:
             "Vision": "For analyzing the contents of specific image files or the entire screen.",
             "Memory": "For saving new information or recalling past experiences and knowledge.",
             "System": "For creating or interacting with stateful, named terminal sessions using commands like `create_terminal` and `run_command`.",
-            "KnowledgeBase": "For answering questions about my personal documents (resume, strengths, etc.).",
+            "KnowledgeBase": "For answering questions about myself, my capabilities, tools, or internal documentation.", # REFINED DESCRIPTION
             "ProcessManagement": "For starting, stopping, or checking long-running background processes like web servers.",
             "Desktop": "For interacting with the user's local desktop environment, such as opening a web browser to a specific URL.",
+            "Conversational": "For general greetings, small talk, or simple acknowledgments that do not require tool usage or retrieving specific factual information.", # REFINED DESCRIPTION
         }
 
         prompt = f"""
@@ -119,7 +123,10 @@ class AIAgent:
 
     User Query/Plan Step: "{query}"
 
-    Based on the request, the single most appropriate category is:
+    Example: If the user asks "What can you do?", the category should be "KnowledgeBase".
+    Example: If the user says "Hi", the category should be "Conversational".
+
+    Output ONLY the exact category name (e.g., 'FileManagement', 'Conversational', 'Web'). Do not add any other text, explanations, or formatting.
     """
 
         response = Settings.llm.complete(prompt)
@@ -127,25 +134,30 @@ class AIAgent:
         
         print(f"INFO: Router chose category: '{raw_choice}' for the query.")
 
-        if "FileManagement" in raw_choice:
+        # Prioritize exact matches to avoid ambiguity warnings and ensure correct routing
+        if raw_choice == "KnowledgeBase": # Ensure this is matched precisely and comes before Memory if it's a sub-set
+            return self.memory_tools # Assuming personal_knowledge_base is part of memory_tools
+        elif raw_choice == "Conversational": # NEW HANDLING
+            return [] # No tools needed for conversational queries
+        elif raw_choice == "FileManagement":
             return self.file_management_tools
-        elif "Coding" in raw_choice:
+        elif raw_choice == "Coding":
             return self.coding_tools
-        elif "Web" in raw_choice:
+        elif raw_choice == "Web":
             return self.web_tools
-        elif "Vision" in raw_choice:
+        elif raw_choice == "Vision":
             return self.vision_tools
-        elif "Memory" in raw_choice:
+        elif raw_choice == "Memory": # This is for saving/recalling experiences, distinct from 'KnowledgeBase' about self
             return self.memory_tools
-        elif "System" in raw_choice:
+        elif raw_choice == "System":
             return self.system_tools
-            
-        # --- ADD THIS NEW ROUTE ---
-        elif "Desktop" in raw_choice:
+        elif raw_choice == "ProcessManagement":
+            return self.process_management_tools
+        elif raw_choice == "Desktop":
             return self.desktop_tools
-            
         else:
-            print(f"WARN: Router returned ambiguous category '{raw_choice}'. Defaulting to general tools.")
+            print(f"WARN: Router returned unrecognized category '{raw_choice}'. Defaulting to general tools.")
+            # Default fallback includes foundational tools, excluding memory to avoid double-counting if memory was intended.
             return self.file_management_tools + self.system_tools + self.web_tools
         
     def navigate(self, url: str) -> str:
@@ -226,7 +238,28 @@ class AIAgent:
             # --- STEP 1: ROUTE to get the specialist tools ---
             specialist_tools = self._route_query(question)
             
-            # --- STEP 2: ASSEMBLE the final toolkit ---
+            # --- NEW: Short-circuit for conversational queries ---
+            if not specialist_tools: # If router returned an empty list (e.g., for "Conversational")
+                print("INFO: Handling conversational query directly.")
+                simple_response_text = Settings.llm.complete(
+                    f"You are a helpful assistant. Respond naturally and concisely to: '{question}'"
+                ).text.strip()
+                
+                # Directly format the response without another LLM call
+                spoken_summary = simple_response_text # For simple greetings, summary can be the response itself
+                full_response = simple_response_text
+                
+                final_formatted_response = (
+                    f"<SPOKEN_SUMMARY>{spoken_summary}</SPOKEN_SUMMARY>"
+                    f"<FULL_RESPONSE>{full_response}</FULL_RESPONSE>"
+                )
+                
+                self.memory.put(ChatMessage(role=MessageRole.USER, content=question))
+                self.memory.put(ChatMessage(role=MessageRole.ASSISTANT, content=simple_response_text))
+                
+                return final_formatted_response
+
+            # --- STEP 2: ASSEMBLE the final toolkit (Original Logic) ---
             # All experts get access to the foundational tools: File Management, Memory, AND Web.
             foundational_tools = (
                 self.file_management_tools + 
@@ -235,6 +268,7 @@ class AIAgent:
             )
             
             # Combine them and remove any potential duplicates.
+            # Make sure KnowledgeBase is not duplicated if Memory also includes it.
             final_tools = specialist_tools + foundational_tools
             final_tools = list({tool.metadata.name: tool for tool in final_tools}.values())
             
@@ -306,7 +340,8 @@ You are a formatting assistant. Your job is to take a raw response from an AI ag
         
         finally:
             # --- STEP 5: AUTO-MEMORY (in the background) ---
-            if raw_response_str:
+            # Only attempt to summarize and save if the full agent ran and produced a raw_response_str
+            if raw_response_str and specialist_tools: # Only save if a tool-using agent was deployed
                 memory_thread = threading.Thread(
                     target=self._summarize_and_save_turn, 
                     args=(question, raw_response_str), 
