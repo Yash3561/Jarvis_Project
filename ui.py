@@ -69,6 +69,7 @@ class ChatWindow(QMainWindow):
         self.terminal_output_received.connect(self.on_terminal_output)
         self.wake_word_detected_signal.connect(self.on_wake_word_detected)
         self.start_wake_word_detector()
+        self.last_project_path = None
 
     def closeEvent(self, event):
         # Perfect. No changes.
@@ -215,8 +216,15 @@ class ChatWindow(QMainWindow):
     def run_agent_task(self, question):
         """Runs the simple CHAT agent."""
         try:
-            # We use asyncio.run() because our patched agent.ask is now async
-            suggestion = asyncio.run(self.agent.ask(question))
+            context_prompt = question
+            if self.last_project_path and "that" in question.lower():
+                context_prompt = f"""
+                The user is asking a follow-up question.
+                You just completed a project in this directory: '{self.last_project_path}'.
+                The user's follow-up is: "{question}"
+                Your task is to find the relevant file (like a .png, .jpg, or .txt) in that directory and present it. Use your file system tools.
+                """
+            suggestion = asyncio.run(self.agent.ask(context_prompt))
             self.response_received.emit(suggestion)
         except Exception as e:
             self.response_received.emit(f"A fatal error occurred: {traceback.format_exc()}")
@@ -226,7 +234,9 @@ class ChatWindow(QMainWindow):
         try:
             from main_controller import MainController
             controller = MainController(self.agent, self)
-            controller.execute_project(project_prompt)
+            result_path = controller.execute_project(project_prompt)
+            if result_path:
+                self.last_project_path = result_path
         except Exception as e:
             error_message = f"<SPOKEN_SUMMARY>A fatal error occurred during the project.</SPOKEN_SUMMARY><FULL_RESPONSE>**Project Failed with a Critical Error:**\n\n```\n{traceback.format_exc()}\n```</FULL_RESPONSE>"
             self.response_received.emit(error_message)

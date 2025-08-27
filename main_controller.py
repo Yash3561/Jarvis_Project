@@ -78,6 +78,7 @@ class MainController:
 
     def execute_project(self, user_prompt: str):
         # ... (This function remains the same) ...
+        self.agent.original_user_prompt = user_prompt
         project_name_base = re.sub(r'\W+', '_', user_prompt.lower())[:40]
         project_timestamp = str(int(time.time()))
         project_name = f"{project_name_base}_{project_timestamp}"
@@ -90,44 +91,40 @@ class MainController:
         self._update_status(f"🚀 **Workspace Initialized:** `{workspace_path}`")
 
         try:
-            # --- UPDATED THE PROMPT TO INCLUDE THE NEW TOOLS ---
+            is_windows = platform.system() == "Windows"
+            python_executable = ".\\venv\\Scripts\\python.exe" if is_windows else "./venv/bin/python"
+            pip_executable = ".\\venv\\Scripts\\pip.exe" if is_windows else "./venv/bin/pip"
             planner_prompt = f"""
-You are "Jarvis," a world-class autonomous software engineer. Your task is to generate a complete, step-by-step plan.
-
-## CRITICAL DIRECTIVES ##
-1.  **THE PLAN MUST BE STATIC:** You cannot use loops (like 'for i in range...'), variables, or f-strings in your plan. If you need to perform an action five times, you must write out the tool call five separate times with the numbers 1, 2, 3, 4, 5 hardcoded.
-2.  **USE THE RIGHT TOOL:** For web scraping, **always** prefer using the `navigate` and `extract_text_from_element` tools. Do not write a custom Python script with `requests`.
-3.  **VENV IS MANDATORY:** For any project that DOES require custom Python scripts, you must create and use a venv.
-4.  **VERIFY WORK:** Use commands like `dir` or `ls -R` to check your work.
-5.  **GUI/SERVER APPS:** For long-running apps, use `wait_for_user_input()` as the final step.
-
-## EXAMPLE OF A CORRECT, STATIC PLAN ##
-# To get the top 3 items from a list on a webpage:
-navigate(url="https://example.com")
-extract_text_from_element(selector="li:nth-child(1)")
-extract_text_from_element(selector="li:nth-child(2)")
-extract_text_from_element(selector="li:nth-child(3)")
+You are "Jarvis," a world-class autonomous software engineer running on a {platform.system()} computer. Generate a complete, step-by-step plan to fulfill the user's request. You MUST follow these directives:
+1.  **VENV IS MANDATORY** for any Python project. First, create it with `run_command(command="python -m venv venv")`.
+2.  **USE THE CORRECT VENV EXECUTABLES** for this OS. For all subsequent commands, use `{python_executable}` for Python and `{pip_executable}` for pip.
+3.  **DO NOT USE `cd`**. The terminal is already in the correct workspace directory.
+4.  **VERIFY YOUR WORK**. After writing a file, you can view its contents with `run_command(command="type your_file.py")` (Windows) or `run_command(command="cat your_file.py")` (Linux/macOS).
+5.  **RUN THE CODE**. To execute a script, you MUST use the command: `run_command(command="{python_executable} your_script.py")`.
+6.  **For long-running apps (servers, GUIs), you must first create a named terminal, then run the start command in it.**
 
 ## AVAILABLE TOOLS ##
 `run_command(command="your-shell-command-here")`
-`write_to_file(file_path="file.py", content='...')`
-`navigate(url="https://example.com")`
-`extract_text_from_element(selector="css.selector.here")`
-`wait_for_user_input(prompt="...")`
+`write_to_file(file_path="relative/path/to/file.py", content='Your file content here...')`
+`create_terminal(name="my_app_server")`
+`run_command(command="start cmd /k ...", terminal_name="my_app_server")`
 
 ## User Request ##
 "{user_prompt}"
 
-Generate the complete, static, step-by-step plan now.
+Generate the plan now. Do not use markdown code blocks.
 """
             self._update_status("🧠 **Generating project plan...**")
             plan = Settings.llm.complete(planner_prompt).text
             self._execute_plan(plan)
             self._update_status(f"✅ **Project Completed Successfully.**")
+            
+            return workspace_path
 
         except Exception as e:
             error_details = traceback.format_exc()
             self._update_status(f"💥 **FATAL ERROR:** An unexpected error occurred in the controller.\n\n{error_details}")
+            return None
         
         finally:
             self._update_status("🧹 **Closing workspace and all terminals...**")
@@ -172,117 +169,101 @@ Generate the complete, static, step-by-step plan now.
 
     def _execute_plan(self, plan: str):
         """
-        FULLY-AGENTIC EXECUTION LOOP WITH SELF-CORRECTION (V4).
-        This version has a more robust correction parser and a more directive
-        prompt to guide the agent towards better tool usage (e.g., Selenium over requests).
+        Executes a multi-step plan, with a self-correction loop to handle errors.
+        This is the resilient core of the autonomous agent.
         """
         self._update_status("⚙️ **Parsing execution plan...**")
-        matches = self._extract_tool_calls(plan)
         
-        if not matches:
-            self._update_status(f"❌ **CRITICAL PARSING ERROR:** No tool calls found in the plan.")
-            raise ValueError("No executable steps found in the generated plan.")
+        # We will maintain a history of the execution for the agent's context
+        execution_history = []
+        # Set a limit to prevent infinite loops
+        max_retries = 5 
+        current_retry = 0
 
-        step_counter = 1
-        # Use a while loop because the 'matches' list can now be modified during execution
-        while step_counter <= len(matches):
-            task_string = matches[step_counter - 1]
-            self._update_status(f"▶️ **Executing Step {step_counter}/{len(matches)}:** {task_string.split('(')[0]}")
+        while current_retry < max_retries:
+            matches = self._extract_tool_calls(plan)
+            
+            if not matches:
+                self._update_status("❌ **CRITICAL PARSING ERROR:** No tool calls found in the current plan.")
+                raise ValueError("No executable steps found in the generated plan.")
 
-            max_retries = 3
-            for attempt in range(max_retries):
+            plan_succeeded = True # Assume the plan will work until a step fails
+            
+            for i, task_string in enumerate(matches):
+                step_number = len(execution_history) + 1
+                self._update_status(f"▶️ **Executing Step {step_number}:** `{task_string.split('(')[0]}`")
+
                 parsed_tool = self._parse_tool_call(task_string)
                 if parsed_tool.get('error'):
-                    self._update_status(f"❌ **CRITICAL PARSING ERROR on Step {step_counter}:** {parsed_tool['error']}")
-                    raise ValueError(f"Tool call parsing failed: {parsed_tool['error']}")
+                    error_message = f"Tool call parsing failed: {parsed_tool['error']} on task: '{task_string}'"
+                    execution_history.append(f"Step {step_number} FAILED. Error: {error_message}")
+                    plan_succeeded = False
+                    break # Stop executing this failed plan
 
                 tool_name = parsed_tool['name']
                 tool_args = parsed_tool['args']
-
+                
+                raw_result = ""
                 try:
+                    # --- Argument Validation: The Fix for the TypeError ---
                     if tool_name == "write_to_file":
+                        if 'file_path' not in tool_args or 'content' not in tool_args:
+                            raise ValueError("Missing 'file_path' or 'content' for write_to_file.")
                         raw_result = self.agent.write_file(**tool_args)
                     elif tool_name == "run_command":
+                        # run_command is already safe and returns errors as strings
                         raw_result = self.agent.run_command(**tool_args)
                     elif tool_name == "create_terminal":
                         raw_result = self.agent.create_terminal(**tool_args)
-                    elif tool_name == "wait_for_user_input":
-                        raw_result = self.agent.wait_for_user_input(**tool_args)
-                    elif tool_name == "navigate":
-                        raw_result = self.agent.navigate(**tool_args)
-                    elif tool_name == "extract_text_from_element":
-                        raw_result = self.agent.extract_text_from_element(**tool_args)
-                    elif tool_name == "analyze_entire_screen":
-                        raw_result = self.agent.analyze_entire_screen(**tool_args)
                     else:
                         raise ValueError(f"Unknown tool '{tool_name}' requested.")
                     
-                    if raw_result and ("ERROR" in str(raw_result).upper() or "TRACEBACK" in str(raw_result).upper()):
+                    # Check for errors reported by the tools themselves
+                    if raw_result and "ERROR:" in str(raw_result).upper():
+                        # This is not a fatal exception, but a failure to be reported to the agent
                         raise Exception(raw_result)
                     
-                    self._update_status(f"✔️ **Step {step_counter} Succeeded!**")
-                    break
+                    # If we get here, the step was a success
+                    self._update_status(f"✔️ **Step {step_number} Succeeded!**")
+                    execution_history.append(f"Step {step_number}: {task_string}\nResult: {raw_result}")
 
                 except Exception as e:
-                    error_output = str(e)
-                    self._update_status(f"⚠️ **EXECUTION FAILED on Step {step_counter}, Attempt {attempt + 1}/{max_retries}.**")
+                    # --- THIS IS THE SELF-CORRECTION TRIGGER ---
+                    error_message = f"EXECUTION FAILED on Step {step_number}. Reason: {e}"
+                    self._update_status(f"❌ **{error_message}**")
+                    execution_history.append(f"Step {step_number} FAILED. Error: {e}")
+                    plan_succeeded = False
+                    break # Stop executing this failed plan
 
-                    if attempt + 1 >= max_retries:
-                        self._update_status(f"❌ **CRITICAL FAILURE:** Max retries reached for this step. Aborting project.")
-                        raise
+            # --- AFTER THE LOOP: Check if the whole plan succeeded ---
+            if plan_succeeded:
+                # The entire list of tasks was completed without errors. We're done.
+                return # Exit the function successfully
 
-                    self._update_status("🧠 **Agent is attempting to self-correct...**")
-                    
-                    correction_prompt = f"""
-You are a debugging AI assistant. Your previous step failed. You are stuck in a loop. You must try a different strategy.
-
-## Original Failed Task ##
-`{task_string}`
-
-## Full Error Output ##
-```
-{error_output}
-```
-
-## ANALYSIS & THE NUCLEAR OPTION ##
-Your plan is failing repeatedly because your CSS selector is wrong. Guessing a new selector is not working.
-
-**YOUR NEW STRATEGY IS THE NUCLEAR OPTION:**
-You must use your `analyze_entire_screen` tool to LOOK at the webpage and figure out the correct CSS selectors. This tool will describe the visual layout of the screen, allowing you to build a correct plan.
-
-## AVAILABLE VISION TOOL ##
-`analyze_entire_screen(question_about_screen="...")`
-
-## YOUR NEW PLAN ##
-Your new plan MUST consist of a SINGLE step: a call to `analyze_entire_screen`. Your question should be something like: "What are the correct CSS selectors for the names of the top 5 trending repositories on this page?"
-
-## REQUIRED OUTPUT FORMAT ##
-Place the single `analyze_entire_screen` tool call inside `<CORRECTED_PLAN>` tags.
-
-<CORRECTED_PLAN>
-</CORRECTED_PLAN>
-"""
-                    
-                    correction_response = Settings.llm.complete(correction_prompt).text
-                    
-                    new_steps = []
-                    plan_match = re.search(r"<CORRECTED_PLAN>(.*?)</CORRECTED_PLAN>", correction_response, re.DOTALL)
-                    
-                    if plan_match:
-                        plan_text = plan_match.group(1).strip()
-                        new_steps = [step.strip() for step in plan_text.split('\n') if step.strip()]
-
-                    if not new_steps:
-                        self._update_status(f"❌ **CORRECTION FAILED:** Agent did not provide a valid corrective plan. Retrying...")
-                        continue
-
-                    self._update_status(f"💡 **Agent's New Multi-Step Corrective Plan:**")
-                    for step in new_steps:
-                        self._update_status(f"  - {step}")
-
-                    matches[step_counter - 1 : step_counter] = new_steps
-                    # The plan has changed, so we need to break the retry loop and let the main loop continue
-                    # from the newly inserted steps.
-                    break 
+            # --- REMEDIATION STEP ---
+            # If we're here, plan_succeeded is False. We need to ask the agent for a new plan.
+            current_retry += 1
+            self._update_status(f" D **Plan failed. Attempting self-correction ({current_retry}/{max_retries}). Asking agent for a new plan...**")
             
-            step_counter += 1
+            remediation_prompt = f"""
+    You are an expert debugger. A multi-step plan has failed. Your task is to analyze the history of execution, identify the error, and generate a NEW, complete, and corrected plan to achieve the original goal.
+
+    ## Original User Request ##
+    "{self.agent.original_user_prompt}"  # You might need to store this in your agent/controller
+
+    ## Execution History (Last step failed) ##
+    {"\n".join(execution_history)}
+
+    ## Your Task ##
+    Based on the error in the last step, create a new, full plan starting from scratch. Do not just provide the single corrected step. Provide the entire sequence of commands needed to recover and complete the task. For example, if a file has a syntax error, the new plan should be:
+    1. `write_to_file(file_path="...", content="...")` with the corrected code.
+    2. `run_command(command="...")` to run the now-fixed script.
+
+    Generate the new plan now.
+    """
+            # Get the new plan from the LLM
+            plan = Settings.llm.complete(remediation_prompt).text
+            # The while loop will now run again with the new plan
+
+        # If the loop finishes without success
+        raise Exception(f"Project failed after {max_retries} attempts. Last error: {execution_history[-1]}")
