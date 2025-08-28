@@ -193,7 +193,6 @@ class ChatWindow(QMainWindow):
             print(f"ERROR: Triage classification failed: {e}. Defaulting to CHAT.")
             return "CHAT"
             
-    # --- UPDATED: The new main input processor ---
     def process_user_query(self, query: str):
         if self.is_thinking: return
         self.is_thinking = True
@@ -201,20 +200,43 @@ class ChatWindow(QMainWindow):
         escaped_query = self.bridge.escape_for_js_template(query)
         self.run_js(f"add_message('user', `{escaped_query}`, `{escaped_query}`)")
         
-        # --- SIMPLIFIED LOGIC ---
-        # We no longer need special follow-up detection.
-        # The agent's own memory and router will handle context.
+        # --- NEW WORKSPACE-AWARE TRIAGE LOGIC ---
         
+        # STEP 1: Check if this is a follow-up to an active project.
+        # We define a "follow-up" as a command given when a workspace is still active (self.last_project_path is set).
+        if self.last_project_path:
+            self.run_js("add_message('system', 'Understood. Continuing previous project...')")
+            # We don't even need to classify. We send it directly to the follow-up task runner.
+            self.agent_thread = threading.Thread(target=self.run_follow_up_task, args=(query, self.last_project_path), daemon=True)
+            self.agent_thread.start()
+            return
+
+        # STEP 2: If it's not a follow-up, proceed with the normal classification.
         decision = self._classify_query(query)
         
         if decision == "PROJECT":
             self.run_js("add_message('system', 'Understood. Initiating new project...')")
             self.agent_thread = threading.Thread(target=self.run_controller_task, args=(query,), daemon=True)
             self.agent_thread.start()
-        else: # CHAT (covers Browser, Desktop, Memory, etc.)
+        else: # CHAT
             self.run_js("add_message('system', 'Jarvis is thinking...')")
             self.agent_thread = threading.Thread(target=self.run_chat_task, args=(query,), daemon=True)
             self.agent_thread.start()
+
+    # The run_chat_task and run_controller_task methods can remain as they are.
+    # We just need to add the new run_follow_up_task method.
+
+    # --- ADD THIS NEW METHOD ---
+    def run_follow_up_task(self, prompt: str, workspace_path: str):
+        """Runs the controller in an existing workspace for follow-up tasks."""
+        try:
+            from main_controller import MainController
+            controller = MainController(self.agent, self)
+            # We need a new method in the controller for this.
+            controller.execute_follow_up(prompt, workspace_path)
+        except Exception as e:
+            error_message = f"<SPOKEN_SUMMARY>A fatal error occurred.</SPOKEN_SUMMARY><FULL_RESPONSE>**Follow-up Failed:**\n\n```\n{traceback.format_exc()}\n```</FULL_RESPONSE>"
+            self.response_received.emit(error_message)
             
     def run_follow_up_task(self, prompt: str, workspace_path: str):
         """Runs the controller in an existing workspace for follow-up tasks."""

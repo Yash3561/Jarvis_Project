@@ -52,22 +52,19 @@ def read_file(file_path: str) -> str:
         return f"An error occurred while reading the file: {e}"
 
 def write_file(file_path: str, content: str) -> str:
-    """
-    Writes content to a specified file, relative to the active project workspace.
-    Creates subdirectories within the workspace if they don't exist.
-    """
+    """Writes content to a file, strictly sandboxed to the active workspace."""
     try:
-        # Get the currently active workspace to ensure we write in the correct place
         workspace = get_workspace()
+        # --- SANDBOX ENFORCEMENT ---
+        # Create the full path and then resolve it to its absolute, canonical path
+        full_path = os.path.join(workspace.base_directory, file_path)
+        absolute_path = os.path.abspath(full_path)
         
-        # Construct the full, absolute path from the workspace root
-        absolute_path = os.path.join(workspace.base_directory, file_path)
-        
-        # Only try to create directories if a directory path is actually specified
-        directory = os.path.dirname(absolute_path)
-        if directory:
-            os.makedirs(directory, exist_ok=True)
+        # Check if the resolved path is still inside our workspace directory
+        if not absolute_path.startswith(os.path.abspath(workspace.base_directory)):
+            return f"ERROR: Path '{file_path}' is outside the allowed workspace. Access denied."
             
+        os.makedirs(os.path.dirname(absolute_path), exist_ok=True)
         with open(absolute_path, 'w', encoding='utf-8') as f:
             f.write(content)
         return f"Successfully wrote {len(content)} bytes to {absolute_path}"

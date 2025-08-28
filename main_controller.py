@@ -1,4 +1,4 @@
-# main_controller.py (V2 - Refactored and Simplified)
+# main_controller.py (V9 - Batch Generation & Orchestration Fixes)
 
 import os
 import platform
@@ -7,187 +7,64 @@ import time
 import traceback
 from agent import AIAgent
 from llama_index.core import Settings
-# --- NEW: Import from our single terminal tool ---
-from tools import terminal
+from llama_index.core.llms import ChatMessage, MessageRole
+from tools import terminal, browser, file_system
 
 class MainController:
+    # ======================================================================================
+    # == INITIALIZATION AND CORE UI COMMUNICATION                                         ==
+    # ======================================================================================
+    
     def __init__(self, agent: AIAgent, ui_handler=None):
+        """Initializes the MainController, the central brain of the application."""
         self.agent = agent
         self.ui = ui_handler
 
     def _update_status(self, message: str):
+        """Sends a status update to the console and the UI."""
         print(message)
         if self.ui:
-            # The controller's messages are system-level, so they don't need a spoken summary.
+            # This formatting seems specific to your UI, keeping it as is.
             formatted_message = f"<SPOKEN_SUMMARY> </SPOKEN_SUMMARY><FULL_RESPONSE>{message}</FULL_RESPONSE>"
             self.ui.response_received.emit(formatted_message)
 
-    def _parse_tool_call(self, task_string: str) -> dict:
-        # This robust parser can remain exactly as it was. No changes needed.
-        tool_name_match = re.match(r"(\w+)\(", task_string)
-        if not tool_name_match:
-            return {'error': f"Could not parse tool name from: {task_string}"}
-        tool_name = tool_name_match.group(1)
-        try:
-            # This logic correctly handles nested parentheses in arguments
-            first_paren_index = task_string.index('(')
-            open_paren_count = 0
-            last_paren_index = -1
-            for i, char in enumerate(task_string[first_paren_index:]):
-                if char == '(': open_paren_count += 1
-                elif char == ')': open_paren_count -= 1
-                if open_paren_count == 0:
-                    last_paren_index = first_paren_index + i
-                    break
-            if last_paren_index == -1: raise ValueError("Mismatched parentheses")
-            args_str = task_string[first_paren_index + 1 : last_paren_index].strip()
-        except ValueError as e:
-            return {'error': f"Mismatched parentheses in tool call: {task_string}. Details: {e}"}
-
-        args = {}
-        # This regex is robust for parsing key=value pairs with various quote styles
-        arg_pattern = re.compile(r"(\w+)\s*=\s*(\"\"\"(.*?)\"\"\"|'''(.*?)'''|\"(.*?)\"|'(.*?)')", re.DOTALL)
-        last_index = 0
-        for match in arg_pattern.finditer(args_str):
-            if match.start() > last_index: # Check for unparsed gaps
-                unparsed = args_str[last_index:match.start()].strip()
-                if unparsed and unparsed != ',': return {'error': f"Could not parse argument segment: '{unparsed}'"}
-            key = match.group(1)
-            # Find the first non-None group for the value
-            value = next((g for g in match.groups()[2:] if g is not None), "")
-            args[key] = value.replace('\\n', '\n').replace('\\"', '"').replace("\\'", "'")
-            last_index = match.end()
-            
-        return {'name': tool_name, 'args': args}
-
+    # ======================================================================================
+    # == PRIMARY ORCHESTRATOR FOR CREATING NEW PROJECTS (execute_project)                 ==
+    # ======================================================================================
 
     def execute_project(self, user_prompt: str):
+        """
+        The main entry point for creating a new software project. This method orchestrates
+        a multi-agent, playbook-driven, "build-then-launch" workflow.
+        """
         self.agent.original_user_prompt = user_prompt
-        project_name_base = re.sub(r'\W+', '_', user_prompt.lower())[:40]
-        project_timestamp = str(int(time.time()))
-        project_name = f"{project_name_base}_{project_timestamp}"
-        workspace_path = os.path.join(os.getcwd(), 'workspaces', project_name)
+        workspace_path = self._initialize_workspace_directory(user_prompt)
 
         try:
-            # === PHASE 1: ORCHESTRATOR - SETUP ===
+            # === PHASE 1: ANALYSIS & SETUP ===
             self._update_status(f"🚀 **Workspace Initialized:** `{workspace_path}`")
             terminal.initialize_workspace(
                 base_directory=workspace_path,
                 output_callback=self.ui.update_terminal_display if self.ui else print
             )
 
-            is_windows = platform.system() == "Windows"
-            python_executable = ".\\venv\\Scripts\\python.exe" if is_windows else "./venv/bin/python"
+            language_guess = self._analyze_language(user_prompt)
+            playbook = self._load_playbook(language_guess)
+            dependencies_str = self._analyze_dependencies(user_prompt, language_guess)
+            self._setup_environment(playbook, dependencies_str)
 
-            # 1a. Call the "Dependency Analyst" agent
-            self._update_status("🔬 **Analyzing dependencies...**")
-            dep_prompt = f"List the python libraries needed for this project: '{user_prompt}'. Respond with a comma-separated list (e.g., 'pygame, requests') or 'None'."
-            dependencies_str = Settings.llm.complete(dep_prompt).text.strip()
+            # === PHASE 2: HIGH-LEVEL PLANNING ===
+            high_level_plan_str = self._generate_high_level_plan(user_prompt, language_guess)
             
-            # 1b. Orchestrator enforces environment setup
-            self._update_status("📦 **Creating virtual environment...**")
-            terminal.run_command_in_terminal("python -m venv venv")
+            # === PHASE 3: CODE IMPLEMENTATION (BUILD) ===
+            self._update_status("🏗️ **Constructing application from plan...**")
+            self._implement_plan_from_scratch(high_level_plan_str, workspace_path, language_guess)
             
-            if dependencies_str and "none" not in dependencies_str.lower():
-                self._update_status(f"  Installing dependencies: {dependencies_str}...")
-                install_command = f"{python_executable} -m pip install {dependencies_str.replace(',', ' ')}"
-                terminal.run_command_in_terminal(install_command)
-
-            # === PHASE 2: ORCHESTRATOR - HIGH-LEVEL PLANNING ===
-            self._update_status("🧠 **Generating high-level plan...**")
-            plan_prompt = f"""
-You are a senior software architect. Your task is to break down a user's request into a high-level plan of the **Python components, classes, and functions** that need to be built.
-
-## CRITICAL RULES ##
-- Your plan must ONLY include concrete coding steps.
-- Do NOT include abstract steps like "Testing", "Deployment", "UI Design", or "Refinement".
-- Focus exclusively on the tangible code that needs to be written.
-
-## Example Plan ##
-**User Request:** "Create a modern snake game."
-**Generated Plan:**
-1.  Initialize Pygame, set up the screen, and define colors.
-2.  Create a `Snake` class to handle its body, movement, and growth.
-3.  Create a `Food` class to handle its position and respawning.
-4.  Implement a function for the main menu screen.
-5.  Implement a function for the game over screen.
-6.  Write the main game loop to handle events, update game state, and draw everything to the screen.
-
-## Your Task ##
-Now, generate a similar pure-code plan for the following request.
-
-**User Request:** "{user_prompt}"
-**Generated Plan:**
-"""
-            high_level_plan_str = Settings.llm.complete(plan_prompt).text.strip()
-            plan_steps = [line.strip() for line in high_level_plan_str.split('\n') if line.strip()]
-            self._update_status(f"📝 **Plan Created:**\n{high_level_plan_str}")
-
-             # === NEW PHASE 3: ORCHESTRATOR - ITERATIVE "REFINE & VALIDATE" LOOP ===
-            full_code = "# This is the beginning of our Python script.\nimport pygame\nimport random\nimport sys\nimport os"
-            script_name = "main.py"
-            max_debug_attempts_per_step = 3
-
-            for i, step in enumerate(plan_steps):
-                self._update_status(f"🛠️ **Working on Component {i + 1}/{len(plan_steps)}:** {step}...")
-                
-                is_component_valid = False
-                
-                for attempt in range(max_debug_attempts_per_step):
-                    # 1. Call the "Code Refiner" specialist. It gets the whole program so far and adds the next feature.
-                    code_refinement_prompt = f"""
-You are an expert Python programmer. Your task is to iteratively build a script.
-Here is the current, fully-functional script. Your job is to add the new feature described in the "Current Task" and return the NEW, COMPLETE script.
-
-**Original Goal for the Whole Project:** "{user_prompt}"
-
-**Current Script (so far):**
-```python
-{full_code}
-```
-
-**Current Task (add this feature):**
-"{step}"
-
-**Your Instructions:**
-- Integrate the new feature into the existing script.
-- Ensure the final, complete script is syntactically correct and logically coherent.
-- Respond with ONLY the new, complete Python script. Do not add explanations.
-"""
-                    refined_code = Settings.llm.complete(code_refinement_prompt).text.strip().replace("```python", "").replace("```", "")
-                    
-                    # 2. Validate the NEW full script for syntax errors
-                    self.agent.write_file(file_path=script_name, content=refined_code)
-                    syntax_check_command = f"{python_executable} -m py_compile {script_name}"
-                    syntax_result = terminal.run_command_in_terminal(syntax_check_command)
-
-                    if "error" not in syntax_result.lower() and "traceback" not in syntax_result.lower():
-                        self._update_status(f"  ✅ **Component {i+1} Integrated Successfully.**")
-                        full_code = refined_code # The new version is now our baseline
-                        is_component_valid = True
-                        break # This component is good, move to the next one
-                    
-                    # 3. If syntax fails, enter a focused debug session
-                    self._update_status(f"  🐞 **Integration failed on step {i+1} (Attempt {attempt + 1}). Debugging...**")
-                    # Use the full-power debugger to fix the whole script
-                    # This uses the same universal debugger prompt from before
-                    debug_prompt = f"""You are a world-class AI software engineer and expert debugger... (Your existing universal debugger prompt here, but pass `refined_code` as the code to fix)"""
-                    # ... for brevity, I'll omit the full debug prompt, but it's the one you already have ...
-                    # Make sure to pass `refined_code` as `final_code` and `syntax_result` as `execution_result`
-                    
-                    # For this example, we'll just log it and retry, as the refine prompt is usually enough
-                    # In a real scenario, you'd call the debugger here.
-                
-                if not is_component_valid:
-                    raise Exception(f"Failed to write a valid component for step '{step}' after {max_debug_attempts_per_step} attempts.")
-
+            # === PHASE 4: LAUNCH & PREVIEW ===
+            self._update_status("🚀 **Starting development servers...**")
+            self._launch_dev_servers(playbook, workspace_path)
             
-            # === PHASE 4: FINAL LAUNCH ===
-            self._update_status("✅ **All components assembled. Launching final application...**")
-            launch_command = f"{python_executable} {script_name}"
-            terminal.launch_application(launch_command)
-            
-            self._update_status(f"✅ **Project Completed and Launched Successfully.**")
+            self._update_status(f"✅ **Development complete. Final application is live in the browser.**")
             return workspace_path
 
         except Exception as e:
@@ -196,66 +73,273 @@ Here is the current, fully-functional script. Your job is to add the new feature
             return None
         
         finally:
-            # For a launched app, we don't clean up the workspace immediately
             self._update_status("✅ **Orchestration complete. Workspace remains active for launched app.**")
-            
-            
-    def execute_task_in_workspace(self, user_prompt: str, workspace_path: str):
-        """Re-initializes an existing workspace and executes a new plan within it."""
-        self.agent.original_user_prompt = user_prompt # For the debugger
-        
-        # Re-initialize the workspace without creating a new folder
-        terminal.initialize_workspace(
-            base_directory=workspace_path,
-            output_callback=self.ui.update_terminal_display if self.ui else print
-        )
-        self._update_status(f"🚀 **Re-opened Workspace:** `{workspace_path}`")
+    
+    # --- Orchestrator Helper Methods ---
 
+    def _initialize_workspace_directory(self, user_prompt: str) -> str:
+        project_name_base = re.sub(r'\W+', '_', user_prompt.lower())[:40]
+        project_timestamp = str(int(time.time()))
+        project_name = f"{project_name_base}_{project_timestamp}"
+        return os.path.join(os.getcwd(), 'workspaces', project_name)
+
+    def _analyze_language(self, user_prompt: str) -> str:
+        self._update_status("🔬 **Analyzing project stack...**")
+        lang_message = [ChatMessage(role=MessageRole.SYSTEM, content="You are a senior architect. Identify the primary tech stack from the user's request. Respond with keywords ONLY. E.g., 'Python, Pygame', 'React, JavaScript, Node.js'."), ChatMessage(role=MessageRole.USER, content=f"User request: \"{user_prompt}\"")]
+        return Settings.llm.chat(lang_message).message.content.strip().lower()
+
+    def _load_playbook(self, language_guess: str) -> dict:
+        playbook_dir = "data/playbooks"
         try:
-            # Create a planner prompt specifically for follow-up tasks
-            is_windows = platform.system() == "Windows"
-            python_executable = ".\\venv\\Scripts\\python.exe" if is_windows else "./venv/bin/python"
+            playbook_files = [f for f in os.listdir(playbook_dir) if f.endswith(".md")]
+            if playbook_files:
+                selector_prompt = [ChatMessage(role=MessageRole.SYSTEM, content="You are an expert architect. Select the single best playbook file from the list based on the user's analyzed tech stack. Respond with ONLY the filename."), ChatMessage(role=MessageRole.USER, content=f"Available Playbooks: {', '.join(playbook_files)}\nUser's Tech Stack: \"{language_guess}\"")]
+                selected_filename = Settings.llm.chat(selector_prompt).message.content.strip().replace('`', '')
+                if selected_filename in playbook_files:
+                    self._update_status(f"📖 **Playbook Selected:** `{selected_filename}`")
+                    content = file_system.read_file(os.path.join(playbook_dir, selected_filename))
+                    playbook = {'setup': content.split("## Setup Commands")[1].split("##")[0].strip(), 'install': content.split("## Dependency Installation Command")[1].split("##")[0].strip(), 'launch': content.split("## Launch Commands")[1].split("##")[0].strip(), 'port': content.split("## Default Port")[1].split("##")[0].strip()}
+                    return playbook
+        except Exception as e:
+            self._update_status(f"⚠️ **Playbook loading error:** {e}")
+        
+        self._update_status("⚠️ **No specific playbook found. Using generic Python fallback.**")
+        return {"setup": "python -m venv venv", "install": ".\\venv\\Scripts\\python.exe -m pip install [packages]", "launch": ".\\venv\\Scripts\\python.exe main.py", "port": "None"}
 
-            planner_prompt = f"""
-You are an expert AI software engineer. Your task is to generate a complete, step-by-step plan of tool calls to fulfill the user's request.
+    def _analyze_dependencies(self, user_prompt: str, language_guess: str) -> str:
+        dep_message = [ChatMessage(role=MessageRole.SYSTEM, content=f"You are a dependency analyst. For a '{language_guess}' project, list required pip/npm packages. Respond with a comma-separated list or 'None'. Do not include built-in libraries."), ChatMessage(role=MessageRole.USER, content=f"User request: \"{user_prompt}\"")]
+        return Settings.llm.chat(dep_message).message.content.strip()
 
-## AVAILABLE TOOLS ##
-- `run_command(command: str)`: Runs a command in a headless (invisible) terminal and waits for it to finish. Use this for setup, like creating a venv or installing packages.
-- `write_file(file_path: str, content: str)`: Writes code or text to a file.
-- `launch_application(command: str)`: **Launches a VISIBLE application for the user.** Use this as the FINAL step for any GUI app like Pygame.
+    def _setup_environment(self, playbook: dict, dependencies_str: str):
+        self._update_status(f"📦 **Setting up environment using playbook...**")
+        if playbook.get('setup') and "none" not in playbook.get('setup').lower():
+            for command in playbook['setup'].split('\n'):
+                terminal.run_command_in_terminal(command.strip())
+        if dependencies_str and "none" not in dependencies_str.lower():
+            self._update_status(f"  Installing dependencies: {dependencies_str}...")
+            install_template = playbook.get('install', "echo 'No install command'")
+            install_command = install_template.replace("[packages]", dependencies_str.replace(',', ' '))
+            install_result = terminal.run_command_in_terminal(install_command)
+            if "error" in install_result.lower():
+                self._update_status(f"⚠️ **Dependency Installation Warning:** Log:\n{install_result}")
 
-## CRITICAL RULES ##
-1.  **VENV First:** The first step for any Python project MUST be: `run_command(command="python -m venv venv")`.
-2.  **Install Dependencies:** The second step MUST be to install libraries using the venv pip, for example: `run_command(command="{python_executable} -m pip install pygame")`.
-3.  **Write Code:** Use `write_file` to create the necessary script(s).
-4.  **Launch for the User:** The FINAL step to run a GUI app like Pygame MUST be: `launch_application(command="{python_executable} your_script_name.py")`.
+    def _generate_high_level_plan(self, user_prompt: str, language_guess: str) -> str:
+        self._update_status("🧠 **Generating high-level, multi-file plan...**")
+        plan_message = [ChatMessage(role=MessageRole.SYSTEM, content=f"You are a senior software architect. Create a machine-readable plan of files and their components for a '{language_guess}' project. Structure your plan by filename, starting with `File:`. Do NOT add any conversational text."), ChatMessage(role=MessageRole.USER, content=f"User Request: \"{user_prompt}\"")]
+        plan_str = Settings.llm.chat(plan_message).message.content.strip()
+        if not plan_str.lower().startswith("file:"):
+            raise Exception(f"Planner failed to produce a valid plan. Response: '{plan_str}'")
+        self._update_status(f"📝 **Plan Created:**\n{plan_str}")
+        return plan_str
 
-## Your Task ##
-Now, generate a plan for the following request. Respond ONLY with the sequence of tool calls.
+    def _implement_plan_from_scratch(self, plan_str: str, workspace_path: str, language_guess: str):
+        """Builds the entire project from scratch, file by file, using a more efficient 'batch' approach."""
+        self._update_status("📄 **Parsing structured plan...**")
+        structured_plan = self._parse_plan_to_dict(plan_str)
+        file_list = "\n".join(structured_plan.keys())
 
-**User Request:** "{user_prompt}"
-**Generated Plan:**
+        for file_name, components in structured_plan.items():
+            self._update_status(f"  - **Generating code for:** `{file_name}`")
+            
+            # If a file was created by a setup command (e.g., npx create-react-app), we should skip overwriting it
+            # unless there are specific components planned for it. This avoids deleting boilerplate.
+            file_path_on_disk = os.path.join(workspace_path, file_name)
+            if os.path.exists(file_path_on_disk) and not components:
+                self._update_status(f"    -> Skipping file `{file_name}` as it already exists and has no planned changes.")
+                continue
+
+            generation_prompt = f"""You are an expert full-stack developer specializing in '{language_guess}'. Your task is to write the complete code for a single file based on the provided project plan.
+
+**Project Goal:** "{self.agent.original_user_prompt}"
+
+**Overall File Structure for Context:**
+{file_list}
+
+---
+
+**Current File to Generate:** `{file_name}`
+
+**Key Components/Features for this file:**
+- {"\n- ".join(components)}
+
+---
+
+Respond with ONLY the raw, complete code for the `{file_name}` file. Do not include any conversational text, explanations, or markdown formatting like ```.
 """
-            self._update_status("🧠 **Generating follow-up plan...**")
-            plan = Settings.llm.complete(planner_prompt).text
-            self._execute_plan(plan) # Use the same robust execution loop
-            self._update_status(f"✅ **Follow-up Task Completed Successfully.**")
+            try:
+                generated_code = Settings.llm.complete(generation_prompt).text.strip()
+                
+                # Robustness: Clean up markdown code blocks if the LLM adds them anyway
+                if generated_code.startswith("```"):
+                    match = re.search(r"```(?:\w+\n)?(.*)```", generated_code, re.DOTALL)
+                    if match:
+                        generated_code = match.group(1).strip()
+                
+                self.agent.write_file(file_path=file_name, content=generated_code)
+                self._update_status(f"    -> Successfully wrote {len(generated_code)} characters to `{file_name}`")
+                time.sleep(0.5) # Brief pause for file system operations
+
+            except Exception as e:
+                self._update_status(f"    -> ⚠️ **Error:** Failed to generate code for `{file_name}`. Details: {e}")
+
+    def _launch_dev_servers(self, playbook: dict, workspace_path: str):
+        """Launches the development servers after the initial code has been written."""
+        if playbook.get('port') and "none" not in playbook['port'].lower():
+            launch_commands_str = playbook.get('launch', 'echo "No launch command found."')
+            launch_commands = [line.strip() for line in launch_commands_str.split('\n') if line.strip() and not line.startswith('#')]
+            
+            for command in launch_commands:
+                terminal_name_match = re.match(r'\[(\w+)\]\s*(.*)', command)
+                if terminal_name_match:
+                    server_terminal = terminal_name_match.group(1)
+                    actual_command = terminal_name_match.group(2)
+                    self._update_status(f"  - Starting dev server in '{server_terminal}' terminal: `{actual_command}`")
+                    terminal.create_headless_terminal(server_terminal)
+                    terminal.start_server_in_terminal(actual_command, server_terminal)
+
+            self._update_status(f"✅ **Dev servers started. Opening live preview browser...**")
+            time.sleep(15) # Give servers a generous amount of time to start up
+            browser.navigate_to(f"http://localhost:{playbook['port']}")
+
+    def _parse_plan_to_dict(self, plan_str: str) -> dict:
+        """Parses the planner's output into a dictionary of {filename: [components]}."""
+        structured_plan = {}
+        current_file = None
+        for line in plan_str.split('\n'):
+            line = line.strip()
+            if not line: continue
+            # Handle "File: path/to/file.js" and "File: path/to/file.js Components:"
+            if line.lower().startswith("file:"):
+                current_file = re.sub(r'components:.*', '', line.split(':', 1)[1], flags=re.IGNORECASE).strip().replace('`', '')
+                if current_file not in structured_plan:
+                    structured_plan[current_file] = []
+            elif current_file and (line.startswith('-') or line.startswith('*') or line.strip()[0].isdigit() or "Components:" in line):
+                 # Ignore lines that are just "Components:"
+                if line.strip().lower() != "components:":
+                    # Clean up bullet points
+                    component = re.sub(r'^[-\*\d\.]+\s*', '', line).strip()
+                    structured_plan[current_file].append(component)
+        return structured_plan
+
+    # ======================================================================================
+    # == ORCHESTRATOR FOR MODIFYING EXISTING PROJECTS (execute_follow_up)                 ==
+    # ======================================================================================
+
+    def execute_follow_up(self, user_prompt: str, workspace_path: str):
+        """Re-opens a workspace and intelligently modifies the existing project based on user feedback."""
+        self.agent.original_user_prompt = user_prompt
+        try:
+            self._update_status(f"🚀 **Re-opening Workspace:** `{workspace_path}`")
+            terminal.initialize_workspace(
+                base_directory=workspace_path,
+                output_callback=self.ui.update_terminal_display if self.ui else print
+            )
+
+            self._update_status("🧠 **Generating modification plan...**")
+            
+            try:
+                all_files = []
+                for root, _, files in os.walk(workspace_path):
+                    for name in files:
+                        all_files.append(os.path.relpath(os.path.join(root, name), workspace_path))
+                file_list_str = "\n".join(all_files)
+            except Exception:
+                file_list_str = "Could not list files."
+
+            plan_prompt = f"""You are a senior developer. The user has provided feedback on an existing project. Create a concise plan to address their feedback. The plan can have two types of steps:
+1. `run_command(command="...")` to run a build step, install a dependency, or other terminal command.
+2. `edit_file(file_path="...", task="...")` to modify an existing file. Describe the change that needs to be made.
+
+**User Feedback:** "{user_prompt}"
+**Files in Workspace:**
+{file_list_str}
+
+Generate the sequence of `run_command` or `edit_file` calls now.
+"""
+            plan_str = Settings.llm.complete(plan_prompt).text.strip()
+            plan_steps = self._extract_tool_calls(plan_str)
+
+            if not plan_steps:
+                raise Exception("The modification planner failed to produce any steps.")
+
+            for step in plan_steps:
+                parsed_step = self._parse_tool_call(step)
+                tool_name = parsed_step.get('name')
+                tool_args = parsed_step.get('args')
+
+                if tool_name == "run_command":
+                    self._update_status(f"  - **Executing Command:** `{tool_args.get('command')}`")
+                    terminal.run_command_in_terminal(**tool_args)
+                
+                elif tool_name == "edit_file":
+                    file_path = tool_args.get('file_path')
+                    task = tool_args.get('task')
+                    self._update_status(f"  - **Editing File:** `{file_path}` to `{task}`")
+                    
+                    current_content = file_system.read_file(os.path.join(workspace_path, file_path))
+                    
+                    edit_prompt = f"""You are an expert programmer. Here is a script. Perform a specific modification and return the new, complete script.
+                    
+**File to Edit:** `{file_path}`
+**Current Content:**
+```
+{current_content}
+```
+**Modification Task:**
+"{task}"
+
+Respond with ONLY the new, complete code for the file.
+"""
+                    edited_code = Settings.llm.complete(edit_prompt).text.strip()
+                    
+                    # Robustness: Clean markdown from edit operations as well
+                    if edited_code.startswith("```"):
+                        match = re.search(r"```(?:\w+\n)?(.*)```", edited_code, re.DOTALL)
+                        if match:
+                            edited_code = match.group(1).strip()
+                    
+                    self.agent.write_file(file_path=file_path, content=edited_code)
+
+            self._update_status("✅ **Modification complete. Please check the result.**")
 
         except Exception as e:
             error_details = traceback.format_exc()
-            self._update_status(f"💥 **FATAL ERROR in follow-up task:**\n\n{error_details}")
-        
+            self._update_status(f"💥 **FATAL ERROR in follow-up:**\n\n{error_details}")
         finally:
-            self._update_status("🧹 **Closing workspace...**")
-            terminal.close_workspace()
-    
-    
-    
+            self._update_status("✅ **Orchestration complete. Workspace remains active.**")
+
+    # ======================================================================================
+    # == UTILITY METHODS FOR PARSING LLM OUTPUT                                           ==
+    # ======================================================================================
+
+    def _parse_tool_call(self, task_string: str) -> dict:
+        tool_name_match = re.match(r"(\w+)\(", task_string)
+        if not tool_name_match: return {'error': f"Could not parse tool name from: {task_string}"}
+        tool_name = tool_name_match.group(1)
+        try:
+            first_paren_index = task_string.index('(')
+            open_paren_count = 1
+            last_paren_index = -1
+            for i, char in enumerate(task_string[first_paren_index + 1:]):
+                if char == '(': open_paren_count += 1
+                elif char == ')': open_paren_count -= 1
+                if open_paren_count == 0:
+                    last_paren_index = first_paren_index + 1 + i
+                    break
+            if last_paren_index == -1: raise ValueError("Mismatched parentheses")
+            args_str = task_string[first_paren_index + 1 : last_paren_index].strip()
+        except ValueError as e: return {'error': f"Mismatched parentheses in tool call: {task_string}. Details: {e}"}
+
+        args = {}
+        arg_pattern = re.compile(r"(\w+)\s*=\s*(\"\"\"(.*?)\"\"\"|'''(.*?)'''|\"(.*?)\"|'(.*?)')", re.DOTALL)
+        for match in arg_pattern.finditer(args_str):
+            key = match.group(1)
+            value = next((g for g in match.groups()[2:] if g is not None), "")
+            args[key] = value
+        return {'name': tool_name, 'args': args}
 
     def _extract_tool_calls(self, plan: str) -> list[str]:
-        # --- UPDATED: Simplified regex with only the project tools ---
-        tool_pattern = r"(run_command|write_file|create_headless_terminal|start_server|launch_application)\("
-        # The rest of this function can remain the same.
+        tool_pattern = r"(run_command|edit_file)\("
         tool_calls = []
         cursor = 0
         while cursor < len(plan):
@@ -274,132 +358,6 @@ Now, generate a plan for the following request. Respond ONLY with the sequence o
                 tool_calls.append(plan[start_index:end_index])
                 cursor = end_index
             else:
-                self._update_status(f"⚠️ Warning: Could not find matching parenthesis for call at index {start_index}.")
+                self._update_status(f"⚠️ Warning: Could not parse tool call at index {start_index}.")
                 cursor = open_paren_index + 1
         return tool_calls
-
-    def _execute_plan(self, plan: str):
-        """
-        Executes a multi-step plan with a robust, single-step self-correction loop.
-        """
-        self._update_status("⚙️ **Parsing execution plan...**")
-        
-        original_steps = self._extract_tool_calls(plan)
-        if not original_steps:
-            raise ValueError("Planner returned a plan with no executable steps.")
-
-        execution_history = []
-        current_steps = list(original_steps)
-        step_index = 0
-        max_retries = 3 # Retries per step
-
-        while step_index < len(current_steps):
-            task_string = current_steps[step_index]
-            step_number = len(execution_history) + 1
-            
-            step_succeeded = False
-            step_retry_count = 0
-            
-            while not step_succeeded and step_retry_count < max_retries:
-                if step_retry_count > 0:
-                    self._update_status(f"▶️ **Re-executing Step {step_number} (Attempt {step_retry_count + 1}):** `{task_string.split('(')[0]}`")
-                else:
-                    self._update_status(f"▶️ **Executing Step {step_number}:** `{task_string.split('(')[0]}`")
-
-                parsed_tool = self._parse_tool_call(task_string)
-                if parsed_tool.get('error'):
-                    error_message = f"Tool parsing failed: {parsed_tool['error']}"
-                    # This is a parsing error, so we immediately trigger correction
-                    raw_error = ValueError(error_message)
-                    
-                else:
-                    tool_name = parsed_tool['name']
-                    tool_args = parsed_tool['args']
-                    
-                    try:
-                        # Use the agent's pass-through methods to call the tools
-                        if tool_name == "write_file":
-                            if 'file_path' not in tool_args or 'content' not in tool_args:
-                                raise ValueError("Missing 'file_path' or 'content' for write_file.")
-                            raw_result = self.agent.write_file(**tool_args)
-                        elif tool_name == "run_command":
-                            if 'command' not in tool_args:
-                                raise ValueError("Missing 'command' for run_command.")
-                            raw_result = self.agent.run_command(**tool_args)
-                        elif tool_name == "create_headless_terminal":
-                            raw_result = self.agent.create_terminal(**tool_args) # The agent method is still create_terminal
-                        # --- RENAME THIS ---
-                        elif tool_name == "start_server":
-                            raw_result = self.agent.start_background_process(**tool_args) # The agent method is still start_background_process
-                        # --- ADD THIS ---
-                        elif tool_name == "launch_application":
-                            # We need to add a pass-through for this in agent.py
-                            raw_result = self.agent.launch_application(**tool_args)
-                        else:
-                            raise ValueError(f"Unknown tool '{tool_name}' requested by planner.")
-                        
-                        if raw_result and "ERROR:" in str(raw_result).upper():
-                            raise Exception(raw_result)
-                        
-                        # --- SUCCESS ---
-                        self._update_status(f"✔️ **Step {step_number} Succeeded!**")
-                        execution_history.append(f"Step {step_number}: {task_string}\nResult: {raw_result}")
-                        step_succeeded = True
-
-                    except Exception as e:
-                        # --- FAILURE ---
-                        raw_error = e
-
-                # --- CORRECTION LOGIC ---
-                if not step_succeeded:
-                    step_retry_count += 1
-                    error_message = f"EXECUTION FAILED on Step {step_number}. Reason: {raw_error}"
-                    self._update_status(f" D **Attempting self-correction ({step_retry_count}/{max_retries}). Asking agent to fix the failed step...**")
-                    workspace_path = terminal.get_workspace().base_directory
-                    try:
-                        file_list = os.listdir(workspace_path)
-                        file_list_str = "\n".join(file_list)
-                    except Exception:
-                        file_list_str = "Could not list files in workspace."
-                        
-                    remediation_prompt = f"""
-You are an expert debugger. The following tool call in a plan failed. Your task is to analyze the context, including the files in the workspace, and rewrite ONLY the single failed step to be correct.
-
-**Original User Request:**
-"{self.agent.original_user_prompt}"
-
-**Execution History:**
-{"\n".join(execution_history)}
-
-**Files in Workspace:**
-{file_list_str}
-
-**Failed Step:**
-`{task_string}`
-
-**Error Message:**
-`{raw_error}`
-
-**Your Task:**
-Based on all the information above, rewrite the "Failed Step" to be correct. Use the correct filenames that you see in the "Files in Workspace" list. You MUST use the `key="value"` syntax for all arguments.
-
-Respond with ONLY the single, corrected tool call.
-"""
-                    # Get the corrected step from the LLM
-                    corrected_step_raw = Settings.llm.complete(remediation_prompt).text.strip()
-
-                    # --- ADD THIS SANITIZATION LOGIC ---
-                    # The LLM sometimes wraps its response in markdown. Let's strip it.
-                    corrected_step = re.sub(r"^\`\`\`.*\n", "", corrected_step_raw)
-                    corrected_step = re.sub(r"\`\`\`$", "", corrected_step).strip()
-                    # --- END OF ADDITION ---
-
-                    # Replace the failed step in our plan with the new one
-                    if corrected_step:
-                        self._update_status(f"ℹ️ **Received corrected step:** `{corrected_step}`")
-                        task_string = corrected_step # The loop will now retry with this new command
-                    else:
-                        raise Exception("Debugger failed to provide a corrected step. Aborting.")
-            
-            # Move to the next step in the plan
-            step_index += 1
