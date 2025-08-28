@@ -201,16 +201,40 @@ class ChatWindow(QMainWindow):
         escaped_query = self.bridge.escape_for_js_template(query)
         self.run_js(f"add_message('user', `{escaped_query}`, `{escaped_query}`)")
         
+        # --- SIMPLIFIED LOGIC ---
+        # We no longer need special follow-up detection.
+        # The agent's own memory and router will handle context.
+        
         decision = self._classify_query(query)
         
         if decision == "PROJECT":
-            self.run_js("add_message('system', 'Understood. Initiating project...')")
+            self.run_js("add_message('system', 'Understood. Initiating new project...')")
             self.agent_thread = threading.Thread(target=self.run_controller_task, args=(query,), daemon=True)
             self.agent_thread.start()
-        else: # CHAT
+        else: # CHAT (covers Browser, Desktop, Memory, etc.)
             self.run_js("add_message('system', 'Jarvis is thinking...')")
-            self.agent_thread = threading.Thread(target=self.run_agent_task, args=(query,), daemon=True)
+            self.agent_thread = threading.Thread(target=self.run_chat_task, args=(query,), daemon=True)
             self.agent_thread.start()
+            
+    def run_follow_up_task(self, prompt: str, workspace_path: str):
+        """Runs the controller in an existing workspace for follow-up tasks."""
+        try:
+            from main_controller import MainController
+            controller = MainController(self.agent, self)
+            controller.execute_task_in_workspace(prompt, workspace_path)
+        except Exception as e:
+            error_message = f"<SPOKEN_SUMMARY>A fatal error occurred during the follow-up task.</SPOKEN_SUMMARY><FULL_RESPONSE>**Follow-up Failed with a Critical Error:**\n\n```\n{traceback.format_exc()}\n```</FULL_RESPONSE>"
+            self.response_received.emit(error_message)
+            
+    # --- THIS IS THE NEW CHAT TASK RUNNER ---
+    def run_chat_task(self, question):
+        """Runs the simple CHAT agent for general queries."""
+        try:
+            suggestion = asyncio.run(self.agent.ask(question))
+            self.response_received.emit(suggestion)
+        except Exception as e:
+            error_message = f"<SPOKEN_SUMMARY>A fatal error occurred.</SPOKEN_SUMMARY><FULL_RESPONSE>**Chat Failed with a Critical Error:**\n\n```\n{traceback.format_exc()}\n```</FULL_RESPONSE>"
+            self.response_received.emit(error_message)
 
     # --- UPDATED: The task runners ---
     def run_agent_task(self, question):
@@ -234,6 +258,7 @@ class ChatWindow(QMainWindow):
         try:
             from main_controller import MainController
             controller = MainController(self.agent, self)
+            # --- MAKE SURE THIS LINE IS PRESENT ---
             result_path = controller.execute_project(project_prompt)
             if result_path:
                 self.last_project_path = result_path

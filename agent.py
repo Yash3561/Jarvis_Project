@@ -1,4 +1,4 @@
-# agent.py (The Definitive V3 - Hierarchical Agent Architecture)
+# agent.py (V4 - Refactored with a Clean Tool Architecture)
 
 import asyncio
 import threading
@@ -8,384 +8,270 @@ from llama_index.core import VectorStoreIndex, SimpleDirectoryReader, Settings
 from llama_index.core.memory import ChatMemoryBuffer
 from llama_index.core.llms import ChatMessage, MessageRole
 
-# --- Import ALL your tool functions. This list must be complete. ---
-from tools.file_system import read_file_content, list_files_in_directory, write_to_file, create_directory
-from tools.screen_reader import analyse_screen_with_gemini, save_screenshot_to_file, analyze_image_file
-from tools.web_search import search_the_web
-from tools.code_writer import generate_code, review_and_refine_code
-from tools.system_commands import run_shell_command, get_current_datetime, get_time_for_location, get_timestamp
-from tools.browser_tool import browse_and_summarize_website
-from tools.browser_automation import browser_controller, navigate, type_text, click, extract_text_from_element, open_url_in_browser
-from tools.persistent_terminal import run_in_terminal
-from tools.long_term_memory import save_experience, recall_experiences
-from tools.script_runner import run_python_script
-from tools.interaction_tools import wait_for_user_input
-from tools.process_manager import start_background_process, check_process_status, stop_background_process
-
-# ADD the new, consolidated tool imports
-from tools.workspace_tools import create_terminal, run_command
-from tools.interaction_tools import wait_for_user_input
+# --- NEW: Import from our clean, consolidated tool files ---
+from tools import browser, desktop, developer, file_system, memory, terminal
+from tools.interaction_tools import wait_for_user_confirmation, ask_user_for_help
 
 class AIAgent:
     def __init__(self, data_directory="./data"):
-        print("INFO: V3 Agent Initializing: Setting up expert toolsets...")
+        print("INFO: V4 Agent Initializing: Setting up expert toolsets...")
         
-        # --- (1) DEFINE YOUR EXPERT TOOLKITS ---
+        # --- (1) DEFINE YOUR EXPERT TOOLKITS using the new modules ---
         personal_query_engine = self._get_personal_query_engine(data_directory)
         
-        self.coding_tools = [
-            FunctionTool.from_defaults(fn=generate_code, name="code_writer"),
-            FunctionTool.from_defaults(fn=review_and_refine_code, name="code_reviewer"),
-            FunctionTool.from_defaults(fn=run_python_script, name="run_python_script"),
-        ]
-        
-        self.web_tools = [
-            FunctionTool.from_defaults(fn=search_the_web, name="fact_checker"),
-            FunctionTool.from_defaults(fn=browse_and_summarize_website, name="browse_website"),
-            FunctionTool.from_defaults(fn=navigate, name="navigate_to_url"),
-            FunctionTool.from_defaults(fn=type_text, name="type_into_browser"),
-            FunctionTool.from_defaults(fn=click, name="click_browser_element"),
-            FunctionTool.from_defaults(fn=open_url_in_browser, name="open_url_in_browser")
-        ]
-        
-        self.vision_tools = [
-            FunctionTool.from_defaults(fn=analyze_image_file, name="analyze_image_file"),
-            FunctionTool.from_defaults(fn=analyse_screen_with_gemini, name="analyze_entire_screen"),
-        ]
-
-        # --- (2) DEFINE FOUNDATIONAL TOOLKITS (Always available) ---
-        self.file_management_tools = [
-            FunctionTool.from_defaults(fn=list_files_in_directory, name="list_files"),
-            FunctionTool.from_defaults(fn=read_file_content, name="read_file"),
-            FunctionTool.from_defaults(fn=write_to_file, name="write_file"),
-            # FunctionTool.from_defaults(fn=create_directory, name="create_directory"), # Re-enable if needed for agent
-        ]
-
-        self.memory_tools = [
-            FunctionTool.from_defaults(fn=save_experience, name="save_experience"),
-            FunctionTool.from_defaults(fn=recall_experiences, name="recall_experiences"),
-            FunctionTool.from_defaults(fn=personal_query_engine.query, name="personal_knowledge_base"),
-        ]
-        
-        self.system_tools = [
-            FunctionTool.from_defaults(fn=run_shell_command, name="run_shell_command"),
-            FunctionTool.from_defaults(fn=create_terminal, name="create_terminal"),
-            FunctionTool.from_defaults(fn=get_current_datetime, name="get_current_datetime"),
-        ]
-        
-        self.process_management_tools = [
-            FunctionTool.from_defaults(fn=start_background_process),
-            FunctionTool.from_defaults(fn=check_process_status),
-            FunctionTool.from_defaults(fn=stop_background_process),
+        # DEVELOPER: For writing, reviewing, and executing code.
+        self.developer_tools = [
+            FunctionTool.from_defaults(fn=developer.generate_code, name="generate_code"),
+            FunctionTool.from_defaults(fn=developer.review_and_refine_code, name="review_code"),
+            FunctionTool.from_defaults(fn=ask_user_for_help, name="ask_user_for_help"),
+            # The 'run_command' tool in terminal.py is now the primary way to run scripts.
         ]
         
         self.interaction_tools = [
-            FunctionTool.from_defaults(fn=wait_for_user_input, name="wait_for_user_input"),
+            FunctionTool.from_defaults(fn=wait_for_user_confirmation, name="wait_for_user_confirmation"),
+            FunctionTool.from_defaults(fn=ask_user_for_help, name="ask_user_for_help"),
+        ]
+        
+        # BROWSER: For all web interaction, from search to deep automation.
+        self.browser_tools = [
+            FunctionTool.from_defaults(fn=browser.search_web, name="search_web"),
+            FunctionTool.from_defaults(fn=browser.browse_and_summarize, name="browse_and_summarize"),
+            FunctionTool.from_defaults(fn=browser.navigate_to, name="navigate_to_url"),
+            FunctionTool.from_defaults(fn=browser.type_into, name="type_into_browser"),
+            FunctionTool.from_defaults(fn=browser.click_element, name="click_browser_element"),
+            FunctionTool.from_defaults(fn=browser.read_element_text, name="read_browser_element"),
+            FunctionTool.from_defaults(fn=browser.open_url, name="open_url_in_browser"),
+            FunctionTool.from_defaults(fn=browser.close_browser, name="close_automation_browser"),
+        ]
+        
+        # DESKTOP: For controlling the mouse, keyboard, and seeing the screen.
+        self.desktop_tools = [
+            FunctionTool.from_defaults(fn=desktop.analyze_entire_screen, name="analyze_screen"),
+            FunctionTool.from_defaults(fn=desktop.find_on_screen, name="find_on_screen"),
+            FunctionTool.from_defaults(fn=desktop.move_mouse, name="move_mouse"),
+            FunctionTool.from_defaults(fn=desktop.click, name="click_mouse"),
+            FunctionTool.from_defaults(fn=desktop.type_text, name="type_text"),
+            FunctionTool.from_defaults(fn=desktop.press_keys, name="press_hotkey"),
         ]
 
-        # Placeholder for desktop tools if they are to be added later
-        self.desktop_tools = []
+        # --- (2) DEFINE FOUNDATIONAL TOOLKITS (Often available) ---
+        
+        # FILE SYSTEM: Core file operations, including image files.
+        self.file_system_tools = [
+            FunctionTool.from_defaults(fn=file_system.list_files, name="list_files"),
+            FunctionTool.from_defaults(fn=file_system.read_file, name="read_file"),
+            FunctionTool.from_defaults(fn=file_system.write_file, name="write_file"),
+            FunctionTool.from_defaults(fn=file_system.create_directory, name="create_directory"),
+            FunctionTool.from_defaults(fn=file_system.delete_file, name="delete_file"),
+            FunctionTool.from_defaults(fn=file_system.save_screenshot, name="save_screenshot"),
+            FunctionTool.from_defaults(fn=file_system.analyze_image, name="analyze_image_file"),
+        ]
+
+        # MEMORY: Saving and recalling past experiences.
+        self.memory_tools = [
+            FunctionTool.from_defaults(fn=memory.save_experience, name="save_experience"),
+            FunctionTool.from_defaults(fn=memory.recall_experiences, name="recall_experiences"),
+            FunctionTool.from_defaults(fn=personal_query_engine.query, name="personal_knowledge_base"),
+        ]
+        
+        # TERMINAL: For running commands and managing workspaces/projects.
+        self.terminal_tools = [
+            FunctionTool.from_defaults(fn=terminal.launch_application, name="launch_application"),
+            FunctionTool.from_defaults(fn=terminal.create_headless_terminal, name="create_headless_terminal"),
+            FunctionTool.from_defaults(fn=terminal.run_command_in_terminal, name="run_command"),
+            FunctionTool.from_defaults(fn=terminal.start_server_in_terminal, name="start_server"),
+        ]
         
         # This is the short-term conversation memory
         self.memory = ChatMemoryBuffer.from_defaults(token_limit=8000)
 
+    # --- Pass-through methods for the MainController ---
+    # These allow the controller to call tools without being coupled to the tools module itself.
     def write_file(self, file_path: str, content: str) -> str:
-        """A direct pass-through to the file writing tool for the controller."""
-        return write_to_file(file_path, content)
+        return file_system.write_file(file_path, content)
+
+    def run_command(self, command: str, terminal_name: str = "default") -> str:
+        return terminal.run_command(command, terminal_name)
     
+    def create_terminal(self, name: str) -> str:
+        return terminal.create_terminal(name)
+        
+    def start_background_process(self, command: str, terminal_name: str) -> str:
+        return terminal.start_background_process(command, terminal_name)
+    
+    def launch_application(self, command: str) -> str:
+        """A direct pass-through to the terminal tool for the controller."""
+        return terminal.launch_application(command)
+
+    
+    # --- The rest of your agent.py logic ---
+    # The _get_personal_query_engine, _route_query, _summarize_and_save_turn, 
+    # ask, execute_task, and reset_memory methods can remain largely the same,
+    # but the router needs to be updated.
+
     def _get_personal_query_engine(self, data_directory):
         print("INFO: Loading knowledge from personal documents...")
-        documents = SimpleDirectoryReader(data_directory).load_data()
-        index = VectorStoreIndex.from_documents(documents)
-        return index.as_query_engine()
+        try:
+            documents = SimpleDirectoryReader(data_directory).load_data()
+            index = VectorStoreIndex.from_documents(documents)
+            return index.as_query_engine()
+        except Exception as e:
+            print(f"WARNING: Could not load personal documents from '{data_directory}'. Knowledge base will be empty. Error: {e}")
+            # Return a dummy query engine
+            return VectorStoreIndex.from_documents([]).as_query_engine()
 
     def _route_query(self, query: str) -> list:
         """
-        The CEO's router. This version is robust and understands verbose LLM responses.
+        Routes the user's query to the most appropriate toolset.
         """
         tool_descriptions = {
-            "FileManagement": "For creating, reading, listing, or managing files and directories.",
-            "Coding": "For writing, reviewing, or executing Python code and scripts.",
-            "Web": "For searching the web, browsing websites, or checking facts online.",
-            "Vision": "For analyzing the contents of specific image files or the entire screen.",
-            "Memory": "For saving new information or recalling past experiences and knowledge.",
-            "System": "For creating or interacting with stateful, named terminal sessions using commands like `create_terminal` and `run_command`.",
-            "KnowledgeBase": "For answering questions about myself, my capabilities, tools, or internal documentation.", # REFINED DESCRIPTION
-            "ProcessManagement": "For starting, stopping, or checking long-running background processes like web servers.",
-            "Desktop": "For interacting with the user's local desktop environment, such as opening a web browser to a specific URL.",
-            "Conversational": "For general greetings, small talk, or simple acknowledgments that do not require tool usage or retrieving specific factual information.", # REFINED DESCRIPTION
+            "Developer": "For writing, reviewing, or executing code and scripts.",
+            "Browser": "For searching the web, browsing websites, scraping content, or performing complex browser automation.",
+            "Desktop": "For analyzing the screen or controlling the mouse and keyboard to interact with GUI applications.",
+            "FileSystem": "For creating, reading, listing, or managing files and directories on the local disk.",
+            "Memory": "For saving new information to long-term memory or recalling past experiences.",
+            "Terminal": "For executing shell commands, creating concurrent terminals, and managing system processes. Ideal for 'Project' work.",
+            "KnowledgeBase": "For answering questions about myself, my capabilities, or information from personal documents.",
+            "Conversational": "For general greetings, small talk, or simple acknowledgments that do not require tool usage.",
         }
 
         prompt = f"""
-    Given the user's query OR a step in a plan, determine the single best tool category to handle the request.
-    The available categories are:
-    {tool_descriptions}
+        Given the user's query, determine the single best tool category to handle the request.
+        The available categories are:
+        {tool_descriptions}
 
-    User Query/Plan Step: "{query}"
-
-    Example: If the user asks "What can you do?", the category should be "KnowledgeBase".
-    Example: If the user says "Hi", the category should be "Conversational".
-
-    Output ONLY the exact category name (e.g., 'FileManagement', 'Conversational', 'Web'). Do not add any other text, explanations, or formatting.
-    """
+        User Query: "{query}"
+        
+        Output ONLY the exact category name (e.g., 'Developer', 'Browser', 'Terminal').
+        """
 
         response = Settings.llm.complete(prompt)
-        raw_choice = response.text.strip().replace("'", "").replace("`", "")
+        choice = response.text.strip().replace("'", "").replace("`", "")
         
-        print(f"INFO: Router chose category: '{raw_choice}' for the query.")
+        print(f"INFO: Router chose category: '{choice}' for the query.")
 
-        # Prioritize exact matches to avoid ambiguity warnings and ensure correct routing
-        if raw_choice == "KnowledgeBase": # Ensure this is matched precisely and comes before Memory if it's a sub-set
-            return self.memory_tools # Assuming personal_knowledge_base is part of memory_tools
-        elif raw_choice == "Conversational": # NEW HANDLING
-            return [] # No tools needed for conversational queries
-        elif raw_choice == "FileManagement":
-            return self.file_management_tools
-        elif raw_choice == "Coding":
-            return self.coding_tools
-        elif raw_choice == "Web":
-            return self.web_tools
-        elif raw_choice == "Vision":
-            return self.vision_tools
-        elif raw_choice == "Memory": # This is for saving/recalling experiences, distinct from 'KnowledgeBase' about self
-            return self.memory_tools
-        elif raw_choice == "System":
-            return self.system_tools
-        elif raw_choice == "ProcessManagement":
-            return self.process_management_tools
-        elif raw_choice == "Desktop":
+        if choice == "Developer":
+            return self.developer_tools
+        elif choice == "Browser":
+            return self.browser_tools
+        elif choice == "Desktop":
             return self.desktop_tools
+        elif choice == "FileSystem":
+            return self.file_system_tools
+        elif choice == "Memory":
+            return self.memory_tools
+        elif choice == "Terminal":
+            return self.terminal_tools
+        elif choice == "KnowledgeBase":
+            return self.memory_tools # Assuming personal_knowledge_base is part of memory_tools
+        elif choice == "Conversational":
+            return [] # No tools needed
         else:
-            print(f"WARN: Router returned unrecognized category '{raw_choice}'. Defaulting to general tools.")
-            # Default fallback includes foundational tools, excluding memory to avoid double-counting if memory was intended.
-            return self.file_management_tools + self.system_tools + self.web_tools
+            print(f"WARN: Router returned unrecognized category '{choice}'. Defaulting to general tools.")
+            # A safe default fallback
+            return self.browser_tools + self.file_system_tools
         
-    def navigate(self, url: str) -> str:
-        """Direct pass-through to the browser automation tool."""
-        return navigate(url)
-
-    def extract_text_from_element(self, selector: str) -> str:
-        """Direct pass-through to the improved browser automation tool."""
-        return extract_text_from_element(selector)
-    
-    
-    def open_url_in_browser(self, url: str) -> str:
-        """A direct pass-through to the browser tool for the controller."""
-        return open_url_in_browser(url)
-    
-    def run_in_terminal(self, command: str) -> str:
-        """A direct pass-through to the terminal tool for the controller."""
-        return run_in_terminal(command)
-    
-    def create_terminal(self, name: str) -> str:
-        """Direct pass-through to the workspace tool for the controller."""
-        return create_terminal(name)
-
-    def run_command(self, command: str, terminal_name: str = "default") -> str:
-        """Direct pass-through to the workspace tool for the controller."""
-        return run_command(command, terminal_name)
-    
-    def wait_for_user_input(self, prompt: str = "Execution paused. Press Enter to continue.") -> str:
-        """Direct pass-through to the user interaction tool."""
-        return wait_for_user_input(prompt=prompt)
-
-    def analyze_entire_screen(self, question_about_screen: str) -> str:
-        """Direct pass-through to the screen reader/vision tool."""
-        # Assuming your tool function is named analyse_screen_with_gemini
-        return analyse_screen_with_gemini(question_about_screen)
-    
-    def _summarize_and_save_turn(self, query, response):
-        """
-        A background task to summarize the conversation turn and save it to long-term memory.
-        """
-        print("INFO: Auto-summarizing turn for long-term memory...")
-        try:
-            if "ERROR" in response or len(query) < 15:
-                print("INFO: Skipping memory save for short query or error.")
-                return
-
-            summarization_prompt = f"""
-            Based on the following user query and AI response, create a concise, one-sentence summary of the key fact or conclusion.
-            This summary will be saved to a long-term knowledge base.
-
-            User Query: "{query}"
-            AI Response: "{response}"
-
-            Concise Summary:
-            """
-            summary_response = Settings.llm.complete(summarization_prompt).text.strip()
-
-            # --- THE FINAL FIX ---
-            # Call save_experience with POSITIONAL arguments, not keyword arguments.
-            # The first argument is the summary, the second is the supporting data.
-            save_experience(
-                f"User asked about '{query}'. Key conclusion: {summary_response}",
-                response
-            )
-        except Exception as e:
-            print(f"WARN: Auto-summary failed. {e}")
-
     async def ask(self, question):
-        """
-        The Definitive V4 'ask' method. It combines the CEO/Router architecture
-        with robust execution, guaranteed formatting, auto-memory, and universal
-        web access for all specialized agents.
-        """
-        raw_response_str = ""  # Initialize for the 'finally' block
+        # This entire method can remain exactly as it was.
+        # It's already designed to work with whatever tools the router provides.
+        # No changes needed here.
+        raw_response_str = ""
         try:
             print(f"\n[User Query]: {question}")
-            
-            # --- STEP 1: ROUTE to get the specialist tools ---
             specialist_tools = self._route_query(question)
             
-            # --- NEW: Short-circuit for conversational queries ---
-            if not specialist_tools: # If router returned an empty list (e.g., for "Conversational")
+            if not specialist_tools:
                 print("INFO: Handling conversational query directly.")
-                simple_response_text = Settings.llm.complete(
-                    f"You are a helpful assistant. Respond naturally and concisely to: '{question}'"
-                ).text.strip()
+                simple_response = Settings.llm.chat([ChatMessage(role=MessageRole.USER, content=f"You are a helpful assistant. Respond naturally and concisely to: '{question}'")])
+                simple_response_text = simple_response.message.content.strip()
                 
-                # Directly format the response without another LLM call
-                spoken_summary = simple_response_text # For simple greetings, summary can be the response itself
-                full_response = simple_response_text
-                
-                final_formatted_response = (
-                    f"<SPOKEN_SUMMARY>{spoken_summary}</SPOKEN_SUMMARY>"
-                    f"<FULL_RESPONSE>{full_response}</FULL_RESPONSE>"
-                )
+                final_formatted_response = f"<SPOKEN_SUMMARY>{simple_response_text}</SPOKEN_SUMMARY><FULL_RESPONSE>{simple_response_text}</FULL_RESPONSE>"
                 
                 self.memory.put(ChatMessage(role=MessageRole.USER, content=question))
                 self.memory.put(ChatMessage(role=MessageRole.ASSISTANT, content=simple_response_text))
                 
                 return final_formatted_response
 
-            # --- STEP 2: ASSEMBLE the final toolkit (Original Logic) ---
-            # All experts get access to the foundational tools: File Management, Memory, AND Web.
-            foundational_tools = (
-                self.file_management_tools + 
-                self.memory_tools + 
-                self.web_tools
-            )
-            
-            # Combine them and remove any potential duplicates.
-            # Make sure KnowledgeBase is not duplicated if Memory also includes it.
+            foundational_tools = self.file_system_tools + self.memory_tools
+
+            # If the specialist toolkit is for browsing or requires facts, ensure web tools are included.
+            if specialist_tools is self.browser_tools or specialist_tools is self.memory_tools:
+                foundational_tools += self.browser_tools
+                        
+            # Combine the specialist and foundational tools, removing duplicates.
             final_tools = specialist_tools + foundational_tools
             final_tools = list({tool.metadata.name: tool for tool in final_tools}.values())
             
-            # Get conversational history for context
             chat_history = self.memory.get_all()
 
-            # --- STEP 3: EXECUTE with the specialized agent ---
             print(f"INFO: Deploying agent with tools: {[t.metadata.name for t in final_tools]}")
             
-            expert_system_prompt = (
-    "You are an autonomous AI project manager. Your sole purpose is to achieve the user's objective by breaking it down into a sequence of executable steps.\n\n"
-    "## Guiding Principles:\n"
-    "1.  **Decompose:** Break down the user's request into the smallest possible, logical next step.\n"
-    "2.  **Execute:** Use one of your available tools to execute that single step.\n"
-    "3.  **Verify:** After every action, especially file creation or modification, use a tool like `list_files` or `read_file` to confirm the action was successful.\n"
-    "4.  **Iterate:** Continue this Decompose -> Execute -> Verify loop until the user's entire objective is complete.\n"
-    "5.  **Report:** Only provide the final, complete answer after all steps have been successfully executed and verified.\n\n"
-    "Your task is to manage and execute the user's project from start to finish."
-)
+            expert_system_prompt = f"""
+You are Jarvis, a hyper-intelligent AI assistant. Your goal is to assist the user by reasoning, planning, and executing tasks using your available tools.
 
-            # Create the agent using the direct, stable constructor
-            agent = ReActAgent(
-                tools=final_tools,
-                llm=Settings.llm,
-                verbose=True,
-                system_prompt=expert_system_prompt
-            )
+## CORE PRINCIPLES ##
+1.  **Reason First:** Before acting, think step-by-step about the user's intent. Your thought process should be logical and clear.
+2.  **Use Your Senses:** For desktop tasks, start by using `analyze_screen` to understand your environment. Don't guess where a button is; see what's actually on the screen.
+3.  **Be Precise:** When using tools like `click_element` or `type_into_browser`, use specific and unique identifiers (like CSS selectors). For desktop `click_mouse`, use coordinates found with `find_on_screen`.
+4.  **Stateful Interaction:** You have a single browser for automation (`_BROWSER_INSTANCE`). If the user asks you to do something on a webpage, assume it's the one you already have open. Only open a new page with `navigate_to_url` if necessary. Use `close_automation_browser` when you are completely finished with a browser task.
+5.  **Confirm and Clarify:** If a user's request is ambiguous (e.g., "click the button"), ask for clarification ("Which button? The blue 'Submit' button or the red 'Cancel' button?").
 
-            response_handler = agent.run(question, chat_history=chat_history)
-            raw_response_str = str(await response_handler)
-
-                        # --- STEP 4: POST-PROCESS AND FORMAT ---
-            print("INFO: Post-processing final response for formatting...")
-            
-            formatting_prompt = f"""
-You are a formatting assistant. Your job is to take a raw response from an AI agent and reformat it into a clean, two-part response for a user interface.
-
-## Guiding Principles:
-1.  **Spoken Summary:** Create a concise, conversational, one-sentence summary of the action taken. This is what the text-to-speech engine will say. It should sound natural, like a helpful assistant reporting back. Start with phrases like "Okay, I've...", "Done. The...", "Here is the...". Do NOT include markdown like backticks or asterisks.
-2.  **Full Response:** This is the detailed, written response for the user to read. Preserve all important details, code blocks, and file names from the raw response. Format it nicely using Markdown. Use code blocks (```) for code and file contents.
-
-## Raw Agent Response ##
-{raw_response_str}
-
-## Instructions ##
-- Analyze the Raw Agent Response.
-- Create a spoken summary and a detailed full response based on the principles above.
-- If the raw response is a simple greeting or a short answer, the spoken and full responses can be similar.
-- **CRITICAL:** If the raw response mentions creating an image or a file (e.g., "Saved to population_chart.png"), you MUST include that exact filename in the FULL_RESPONSE so the UI can find and display it.
-
-## RESPONSE TEMPLATE (Use this exact format) ##
-<SPOKEN_SUMMARY>A brief, friendly summary of what was done.</SPOKEN_SUMMARY>
-<FULL_RESPONSE>The full, detailed, markdown-formatted answer with all necessary information and code blocks.</FULL_RESPONSE>
+You are now in control. Analyze the user's request and begin.
 """
+            # --- END OF ADDITION ---
+            
+            agent = ReActAgent(
+                    tools=final_tools,
+                    llm=Settings.llm,
+                    memory=self.memory,
+                    system_prompt=expert_system_prompt, # Pass the new prompt here
+                    verbose=True
+                )
+            
+            response = await agent.run(question, chat_history=chat_history)
+            raw_response_str = str(response)
 
+            print("INFO: Post-processing final response for formatting...")
+            formatting_prompt = f"""
+            You are a formatting assistant. Your job is to take a raw response from an AI agent and reformat it into a clean, two-part response using the provided XML template.
+            1.  **Spoken Summary:** Create a concise, conversational, one-sentence summary of the action taken. This is what the text-to-speech engine will say. Start with phrases like "Okay, I've...", "Done. The...", "Here is the...".
+            2.  **Full Response:** This is the detailed, written response for the user to read. Preserve all important details, code blocks, and file names from the raw response. Format it nicely using Markdown.
+
+            Raw Agent Response: {raw_response_str}
+
+            RESPONSE TEMPLATE:
+            <SPOKEN_SUMMARY>A brief, friendly summary of what was done.</SPOKEN_SUMMARY>
+            <FULL_RESPONSE>The full, detailed, markdown-formatted answer with all necessary information.</FULL_RESPONSE>
+            """
             final_formatted_response = Settings.llm.complete(formatting_prompt).text
             
-            # Update short-term memory with the RAW response for context
             self.memory.put(ChatMessage(role=MessageRole.USER, content=question))
             self.memory.put(ChatMessage(role=MessageRole.ASSISTANT, content=raw_response_str))
             
-            # Return the beautifully formatted response to the UI
             return final_formatted_response
-
         except Exception as e:
             import traceback
             traceback.print_exc()
-            return f"ERROR during specialized agent execution: {e}"
-        
+            return f"<SPOKEN_SUMMARY>An error occurred.</SPOKEN_SUMMARY><FULL_RESPONSE>ERROR: {e}\n{traceback.format_exc()}</FULL_RESPONSE>"
         finally:
-            # --- STEP 5: AUTO-MEMORY (in the background) ---
-            # Only attempt to summarize and save if the full agent ran and produced a raw_response_str
-            if raw_response_str and specialist_tools: # Only save if a tool-using agent was deployed
-                memory_thread = threading.Thread(
-                    target=self._summarize_and_save_turn, 
-                    args=(question, raw_response_str), 
-                    daemon=True
-                )
+            if raw_response_str:
+                memory_thread = threading.Thread(target=self._summarize_and_save_turn, args=(question, raw_response_str), daemon=True)
                 memory_thread.start()
-                
-    # --- ADD THIS NEW METHOD ---
-    def start_background_process(self, command: str, working_directory: str, launch_in_new_window: bool = False) -> str:
-        """A direct pass-through to the process manager tool for the controller."""
-        return start_background_process(command, working_directory, launch_in_new_window)
-    
-    def execute_task(self, task_prompt: str, workspace_path: str):
-        # We use asyncio.run to call our async method from the synchronous controller thread
-        return asyncio.run(self.aexecute_task(task_prompt, workspace_path))
 
-    async def aexecute_task(self, task_prompt: str, workspace_path: str):
+    def _summarize_and_save_turn(self, query, response):
+        # This method can also remain as it was.
         try:
-            print(f"\n[Agent Task]: {task_prompt}")
-            specialist_tools = self._route_query(task_prompt)
-            # Project tasks don't need memory or web browsing unless specified
-            foundational_tools = self.file_management_tools + self.system_tools
-            final_tools = list({tool.metadata.name: tool for tool in (specialist_tools + foundational_tools)}.values())
-
-            task_system_prompt = f"You are a subordinate AI assistant. Your only job is to execute the given task precisely as instructed. You are operating within the workspace: '{workspace_path}'. All file operations MUST use relative paths from this workspace. Your current task is: \"{task_prompt}\""
+            if "error" in response.lower() or len(query) < 10:
+                return
             
-            # --- API FIX ---
-            # Create the agent using the documented .from_tools() method
-            agent = ReActAgent(
-                tools=final_tools,
-                llm=Settings.llm,
-                system_prompt=task_system_prompt,
-                verbose=True
-            )
-
-            # --- API FIX ---
-            # Execute the agent using the modern await .achat() method
-            response = await agent.run(task_prompt)
-            return str(response)
-
+            summarization_prompt = f"""Create a concise, one-sentence summary of the key fact or conclusion from this user query and AI response.
+            User Query: "{query}"
+            AI Response: "{response}"
+            Summary:"""
+            summary = Settings.llm.complete(summarization_prompt).text.strip()
+            memory.save_experience(f"On the topic of '{query}', it was concluded that: {summary}", f"FULL_RESPONSE:\n{response}")
         except Exception as e:
-            import traceback
-            traceback.print_exc()
-            return f"ERROR during task execution: {e}"
-        
+            print(f"WARN: Auto-summary failed. {e}")
+    
     def reset_memory(self):
         self.memory.reset()

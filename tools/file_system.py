@@ -1,14 +1,32 @@
-# tools/file_system.py (Corrected and Expanded)
+# tools/file_system.py (The Unified File I/O and Image Analysis Tool)
 
 import os
 import shutil
-from .workspace import get_workspace
+from mss import mss
+from PIL import Image
+import google.generativeai as genai
+import config
+from .terminal import get_workspace
 
-def list_files_in_directory(directory_path: str = ".") -> str:
+try:
+    # This configuration is needed for the image analysis tool
+    genai.configure(api_key=config.Settings.gemini_api_key)
+except Exception as e:
+    print(f"CRITICAL WARNING: Could not configure Gemini API for file_system tool. Image analysis will fail. Error: {e}")
+
+
+# --- Core Directory and File Operations ---
+
+def list_files(directory_path: str = ".") -> str:
     """
-    Lists all files and directories in a specified directory path.
-    The default path is the current working directory where the project is running.
+    Lists all files and subdirectories in a specified directory path.
+    If no path is provided, it lists the contents of the current working directory.
     """
+    # For safety, ensure we are not trying to list files outside the project root
+    # This is a conceptual check; a real implementation would need robust sandboxing.
+    if ".." in directory_path:
+        return "Error: Access to parent directories is not allowed."
+        
     try:
         if not os.path.isdir(directory_path):
             return f"Error: Directory not found at '{directory_path}'"
@@ -21,66 +39,93 @@ def list_files_in_directory(directory_path: str = ".") -> str:
     except Exception as e:
         return f"An error occurred while listing files: {e}"
 
-def write_to_file(file_path: str, content: str) -> str:
-    """
-    Writes content to a file *relative to the active workspace root*.
-    Creates subdirectories if they don't exist.
-    """
-    workspace = get_workspace()
-    if not workspace:
-        return "ERROR: Workspace not initialized. Cannot write file."
-
-    # Construct the full, absolute path from the workspace root and the relative path
-    absolute_path = os.path.join(workspace.base_directory, file_path)
-    
-    try:
-        os.makedirs(os.path.dirname(absolute_path), exist_ok=True)
-        with open(absolute_path, 'w', encoding='utf-8') as f:
-            f.write(content)
-        return f"Successfully wrote {len(content)} bytes to {absolute_path}"
-    except Exception as e:
-        return f"ERROR: Failed to write to file {absolute_path}. Reason: {e}"
-
-# --- THIS IS THE NEW TOOL ---
-def read_file_content(file_path: str) -> str:
-    """
-    Reads the entire content of a specified text file and returns it as a string.
-    Requires the full path to the file.
-    """
+def read_file(file_path: str) -> str:
+    """Reads the entire content of a specified text file and returns it as a string."""
     try:
         if not os.path.exists(file_path):
             return f"Error: The file '{file_path}' was not found."
             
-        with open(file_path, 'r', encoding='utf-8') as f:
+        with open(file_path, 'r', encoding='utf-8', errors='replace') as f:
             content = f.read()
         return f"--- START OF FILE: {os.path.basename(file_path)} ---\n{content}\n--- END OF FILE ---"
     except Exception as e:
         return f"An error occurred while reading the file: {e}"
-    
+
+def write_file(file_path: str, content: str) -> str:
+    """
+    Writes content to a specified file, relative to the active project workspace.
+    Creates subdirectories within the workspace if they don't exist.
+    """
+    try:
+        # Get the currently active workspace to ensure we write in the correct place
+        workspace = get_workspace()
+        
+        # Construct the full, absolute path from the workspace root
+        absolute_path = os.path.join(workspace.base_directory, file_path)
+        
+        # Only try to create directories if a directory path is actually specified
+        directory = os.path.dirname(absolute_path)
+        if directory:
+            os.makedirs(directory, exist_ok=True)
+            
+        with open(absolute_path, 'w', encoding='utf-8') as f:
+            f.write(content)
+        return f"Successfully wrote {len(content)} bytes to {absolute_path}"
+    except Exception as e:
+        return f"ERROR: Failed to write to file {file_path}. Reason: {e}"
 
 def create_directory(directory_path: str) -> str:
-    """
-    Creates a new directory at the specified path.
-    Use this when you need to create a folder to store files in.
-    """
+    """Creates a new directory (and any parent directories) at the specified path."""
     try:
         os.makedirs(directory_path, exist_ok=True)
         return f"Successfully created directory (or it already existed): {directory_path}"
     except Exception as e:
         return f"An error occurred while creating the directory: {e}"
-    
-def copy_file(source_path: str, destination_path: str) -> str:
+
+def delete_file(file_path: str) -> str:
+    """Deletes the specified file."""
+    try:
+        os.remove(file_path)
+        return f"Successfully deleted file: {file_path}"
+    except FileNotFoundError:
+        return f"Error: The file '{file_path}' was not found."
+    except Exception as e:
+        return f"An error occurred while deleting the file: {e}"
+
+
+# --- Image File Operations ---
+
+def save_screenshot(file_path: str) -> str:
     """
-    Copies a file from a source path to a destination path.
+    Captures a screenshot of the PRIMARY monitor and saves it to the specified file_path.
+    The file path should end in .png.
     """
     try:
-        # If destination is a directory, create the full path for the new file
-        if os.path.isdir(destination_path):
-            destination_path = os.path.join(destination_path, os.path.basename(source_path))
-            
-        shutil.copy(source_path, destination_path)
-        return f"Successfully copied {source_path} to {destination_path}"
-    except FileNotFoundError:
-        return f"Error: The source file '{source_path}' was not found."
+        if not file_path.lower().endswith('.png'):
+            file_path += '.png'
+        with mss() as sct:
+            screenshot_path = sct.shot(mon=1, output=file_path)
+        return f"Successfully saved screenshot of the primary monitor to {screenshot_path}"
     except Exception as e:
-        return f"An error occurred while copying the file: {e}"
+        return f"An error occurred while saving the screenshot: {e}"
+
+def analyze_image(file_path: str, prompt: str) -> str:
+    """
+    Analyzes an image file from a local path and answers a question about it.
+    Use this to understand the contents of specific images saved on the disk.
+    For example: analyze_image(file_path='path/to/chart.png', prompt='What is the value of the red bar?')
+    """
+    print(f"INFO: Analyzing local image file: '{file_path}' with prompt: '{prompt}'")
+
+    if not os.path.exists(file_path):
+        return f"Error: The file '{file_path}' does not exist."
+
+    try:
+        model = genai.GenerativeModel('gemini-1.5-pro-latest')
+        img = Image.open(file_path)
+        response = model.generate_content([prompt, img])
+        
+        print("INFO: Gemini image file analysis complete.")
+        return response.text
+    except Exception as e:
+        return f"Error during image analysis: {e}"
