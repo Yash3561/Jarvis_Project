@@ -10,7 +10,7 @@ from llama_index.embeddings.huggingface import HuggingFaceEmbedding
 import config
 
 print("INFO: Configuring global AI settings...")
-Settings.llm = GoogleGenAI(model="models/gemini-1.5-pro-latest", api_key=config.Settings.gemini_api_key)
+Settings.llm = GoogleGenAI(model="gemini-2.5-pro", api_key=config.Settings.gemini_api_key)
 Settings.embed_model = HuggingFaceEmbedding(model_name="BAAI/bge-small-en-v1.5")
 print("INFO: AI settings configured.")
 

@@ -232,18 +232,7 @@ class ChatWindow(QMainWindow):
         try:
             from main_controller import MainController
             controller = MainController(self.agent, self)
-            # We need a new method in the controller for this.
             controller.execute_follow_up(prompt, workspace_path)
-        except Exception as e:
-            error_message = f"<SPOKEN_SUMMARY>A fatal error occurred.</SPOKEN_SUMMARY><FULL_RESPONSE>**Follow-up Failed:**\n\n```\n{traceback.format_exc()}\n```</FULL_RESPONSE>"
-            self.response_received.emit(error_message)
-            
-    def run_follow_up_task(self, prompt: str, workspace_path: str):
-        """Runs the controller in an existing workspace for follow-up tasks."""
-        try:
-            from main_controller import MainController
-            controller = MainController(self.agent, self)
-            controller.execute_task_in_workspace(prompt, workspace_path)
         except Exception as e:
             error_message = f"<SPOKEN_SUMMARY>A fatal error occurred during the follow-up task.</SPOKEN_SUMMARY><FULL_RESPONSE>**Follow-up Failed with a Critical Error:**\n\n```\n{traceback.format_exc()}\n```</FULL_RESPONSE>"
             self.response_received.emit(error_message)

@@ -19,7 +19,8 @@ numpy
 
 # UI and System
 PyQt6
-pydotenv
+PyQt6-WebEngine
+python-dotenv
 pywin32
 
 # Markdown Rendering
